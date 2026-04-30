@@ -27,8 +27,11 @@ fi
 
 # Fix ownership of the home directory itself (not recursively into mounted volumes)
 chown coder:$(id -g coder) /home/coder
-chown coder:$(id -g coder) /home/coder/.claude 2>/dev/null || true
+chown -R coder:$(id -g coder) /home/coder/.claude 2>/dev/null || true
+chown -R coder:$(id -g coder) /home/coder/.config 2>/dev/null || true
 chown coder:$(id -g coder) /home/coder/workspace 2>/dev/null || true
 
 # Run the actual command as the coder user
+# Note: the SSH agent socket (if mounted) is already accessible because
+# the coder user's UID has been remapped to match the host user who owns it.
 exec gosu coder "$@"
