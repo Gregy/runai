@@ -169,5 +169,4 @@ docker run -it --rm \
     -v "$CLAUDE_CONFIG_JSON":/home/coder/.claude.json \
     "$IMAGE_NAME" claude \
     --allowedTools "Bash(*),Read,Edit,Write,Glob,Grep,WebFetch,WebSearch,NotebookEdit,Agent" \
-    --disallowedTools "Bash(tsh*)" \
     "${CLAUDE_ARGS[@]+"${CLAUDE_ARGS[@]}"}"

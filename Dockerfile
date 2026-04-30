@@ -79,6 +79,7 @@ COPY entrypoint.sh /entrypoint.sh
 COPY CLAUDE.md /home/coder/CLAUDE.md
 COPY host-browser /usr/local/bin/host-browser
 RUN chmod +x /entrypoint.sh /usr/local/bin/host-browser \
+    && ln -s /usr/local/bin/host-browser /usr/local/bin/xdg-open \
     && chown coder:coder /home/coder/CLAUDE.md
 
 # Route URL-opening tools (gh, gcloud, aws sso, claude, ...) through the
