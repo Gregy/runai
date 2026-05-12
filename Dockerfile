@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
     openssh-client \
+    postgresql-client \
     unzip \
     && rm -rf /var/lib/apt/lists/* \
     && pip3 install --break-system-packages pre-commit
@@ -58,6 +59,12 @@ RUN curl -fsSL "https://gitlab.com/gitlab-org/cli/-/releases/v${GLAB_VERSION}/do
     && apt-get update && apt-get install -y /tmp/glab.deb \
     && rm -f /tmp/glab.deb \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Grafana Cloud CLI (gcx) — official upstream install script
+# https://github.com/grafana/gcx/blob/main/docs/installation.md
+ARG GCX_VERSION=0.2.11
+RUN curl -fsSL https://raw.githubusercontent.com/grafana/gcx/main/scripts/install.sh \
+        | INSTALL_DIR=/usr/local/bin VERSION=${GCX_VERSION} sh
 
 # Install Teleport tsh client (binary provided in build context)
 COPY tsh-linux-amd64 /usr/local/bin/tsh

@@ -1,1 +1,2 @@
-You have sudo access. If you need elevated privileges, use `sudo` and provide the password when prompted. Ask the user for the sudo password before running any sudo command.
+- You have sudo access. If you need elevated privileges, use `sudo` and provide the password when prompted. Ask the user for the sudo password before running any sudo command.
+- You have access to metrics via grafana.rossum.cloud. Use gcx cli to interact with grafana. Ask the user for token.

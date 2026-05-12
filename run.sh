@@ -168,5 +168,5 @@ docker run -it --rm \
     -v "$CLAUDE_CONFIG_DIR":/home/coder/.claude \
     -v "$CLAUDE_CONFIG_JSON":/home/coder/.claude.json \
     "$IMAGE_NAME" claude \
-    --allowedTools "Bash(*),Read,Edit,Write,Glob,Grep,WebFetch,WebSearch,NotebookEdit,Agent" \
+    --allowedTools "Bash,Edit,Read,Write,Glob,Grep,NotebookEdit,Agent,WebFetch,WebSearch,AskUserQuestion,CronCreate,CronDelete,CronList,EnterPlanMode,ExitPlanMode,EnterWorktree,ExitWorktree,Monitor,PushNotification,RemoteTrigger,ScheduleWakeup,Skill,TaskCreate,TaskGet,TaskList,TaskOutput,TaskStop,TaskUpdate,ToolSearch" \
     "${CLAUDE_ARGS[@]+"${CLAUDE_ARGS[@]}"}"
