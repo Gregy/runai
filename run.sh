@@ -5,10 +5,11 @@ IMAGE_NAME="claude-code"
 CONTAINER_NAME="claude-code-$(date +%s)"
 
 # ── Parse flags ─────────────────────────────────────────────────
-# Usage: run.sh [--ssh] [--aws] [workspace] [-- claude args...]
+# Usage: run.sh [--ssh] [--aws] [--docker] [workspace] [-- claude args...]
 # Unknown flags (starting with -) are forwarded to claude.
 FORWARD_SSH=false
 FORWARD_AWS=false
+FORWARD_DOCKER=false
 CLAUDE_ARGS=()
 past_double_dash=false
 
@@ -20,6 +21,7 @@ for arg in "$@"; do
     case "$arg" in
         --ssh) FORWARD_SSH=true ;;
         --aws) FORWARD_AWS=true ;;
+        --docker) FORWARD_DOCKER=true ;;
         --)   past_double_dash=true ;;
         -*)   CLAUDE_ARGS+=("$arg") ;;
         *)
@@ -106,6 +108,21 @@ if [ "$FORWARD_SSH" = true ]; then
     fi
 fi
 
+# ── Docker socket forwarding ───────────────────────────────────
+DOCKER_DOCKER_ARGS=()
+if [ "$FORWARD_DOCKER" = true ]; then
+    DOCKER_HOST_VAL="${DOCKER_HOST:-}"
+    DOCKER_SOCK="${DOCKER_HOST_VAL#unix://}"
+    [ "$DOCKER_SOCK" = "$DOCKER_HOST_VAL" ] && DOCKER_SOCK=""
+    DOCKER_SOCK="${DOCKER_SOCK:-/var/run/docker.sock}"
+    if [ -S "$DOCKER_SOCK" ]; then
+        DOCKER_DOCKER_ARGS+=(-v "$DOCKER_SOCK":/var/run/docker.sock)
+        echo "🐳 Docker socket forwarding: enabled ($DOCKER_SOCK → /var/run/docker.sock)"
+    else
+        echo "⚠️  --docker was passed but $DOCKER_SOCK is not a socket. Skipping Docker forwarding."
+    fi
+fi
+
 # ── Host browser opener ─────────────────────────────────────────
 # Random per-run password; daemon binds 127.0.0.1 on an OS-assigned port.
 # The container talks to it through the shared host network namespace.
@@ -164,6 +181,7 @@ docker run -it --rm \
     "${GIT_DOCKER_ARGS[@]+"${GIT_DOCKER_ARGS[@]}"}" \
     "${SSH_DOCKER_ARGS[@]+"${SSH_DOCKER_ARGS[@]}"}" \
     "${AWS_DOCKER_ARGS[@]+"${AWS_DOCKER_ARGS[@]}"}" \
+    "${DOCKER_DOCKER_ARGS[@]+"${DOCKER_DOCKER_ARGS[@]}"}" \
     -v "$ABSOLUTE_WORKSPACE":/home/coder/workspace \
     -v "$CLAUDE_CONFIG_DIR":/home/coder/.claude \
     -v "$CLAUDE_CONFIG_JSON":/home/coder/.claude.json \

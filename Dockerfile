@@ -17,6 +17,7 @@ RUN apt-get update && apt-get install -y \
     openssh-client \
     postgresql-client \
     unzip \
+    bc \
     && rm -rf /var/lib/apt/lists/* \
     && pip3 install --break-system-packages pre-commit
 
@@ -40,6 +41,16 @@ RUN curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /usr/sh
     && echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com bookworm main" \
         > /etc/apt/sources.list.d/hashicorp.list \
     && apt-get update && apt-get install -y terraform \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Docker CLI (client only; daemon comes from the host via socket bind mount)
+RUN install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://download.docker.com/linux/debian/gpg \
+        -o /etc/apt/keyrings/docker.asc \
+    && chmod a+r /etc/apt/keyrings/docker.asc \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian bookworm stable" \
+        > /etc/apt/sources.list.d/docker.list \
+    && apt-get update && apt-get install -y docker-ce-cli docker-buildx-plugin docker-compose-plugin \
     && rm -rf /var/lib/apt/lists/*
 
 # Install GitHub CLI (gh)

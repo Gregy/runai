@@ -1,2 +1,3 @@
 - You have sudo access. If you need elevated privileges, use `sudo` and provide the password when prompted. Ask the user for the sudo password before running any sudo command.
 - You have access to metrics via grafana.rossum.cloud. Use gcx cli to interact with grafana. Ask the user for token.
+- If some action requires login (e.g. tsh login, aws sso login) feel free to issue the login command and letting the operator handle the browser popup

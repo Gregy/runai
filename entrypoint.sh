@@ -25,6 +25,21 @@ if [ "$HOST_UID" != "$CURRENT_UID" ]; then
     usermod -u "$HOST_UID" coder
 fi
 
+# If the Docker socket is bind-mounted, ensure the coder user can access it
+# by adding it to a group matching the socket's GID.
+if [ -S /var/run/docker.sock ]; then
+    DOCKER_SOCK_GID=$(stat -c '%g' /var/run/docker.sock)
+    if [ "$DOCKER_SOCK_GID" != "0" ]; then
+        if getent group "$DOCKER_SOCK_GID" > /dev/null 2>&1; then
+            DOCKER_GROUP=$(getent group "$DOCKER_SOCK_GID" | cut -d: -f1)
+        else
+            DOCKER_GROUP=docker-host
+            groupadd -g "$DOCKER_SOCK_GID" "$DOCKER_GROUP"
+        fi
+        usermod -aG "$DOCKER_GROUP" coder
+    fi
+fi
+
 # Fix ownership of the home directory itself (not recursively into mounted volumes)
 chown coder:$(id -g coder) /home/coder
 chown -R coder:$(id -g coder) /home/coder/.claude 2>/dev/null || true
