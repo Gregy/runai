@@ -1,9 +1,11 @@
 # Dockerfile for Claude Code (OAuth / Subscription login)
-FROM node:20-bookworm
+# Node 22+ required by pi 0.75+.
+FROM node:22-trixie
 
 # Install useful dev tools and dependencies
 RUN apt-get update && apt-get install -y \
     git \
+    git-lfs \
     curl \
     wget \
     vim \
@@ -19,7 +21,8 @@ RUN apt-get update && apt-get install -y \
     unzip \
     bc \
     && rm -rf /var/lib/apt/lists/* \
-    && pip3 install --break-system-packages pre-commit
+    && pip3 install --break-system-packages pre-commit \
+    && git lfs install --system --skip-repo
 
 # Install AWS CLI v2
 RUN curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip \
@@ -38,7 +41,7 @@ RUN curl -fsSL "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/mast
 
 # Install Terraform
 RUN curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg \
-    && echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com bookworm main" \
+    && echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com trixie main" \
         > /etc/apt/sources.list.d/hashicorp.list \
     && apt-get update && apt-get install -y terraform \
     && rm -rf /var/lib/apt/lists/*
@@ -48,7 +51,7 @@ RUN install -m 0755 -d /etc/apt/keyrings \
     && curl -fsSL https://download.docker.com/linux/debian/gpg \
         -o /etc/apt/keyrings/docker.asc \
     && chmod a+r /etc/apt/keyrings/docker.asc \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian bookworm stable" \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian trixie stable" \
         > /etc/apt/sources.list.d/docker.list \
     && apt-get update && apt-get install -y docker-ce-cli docker-buildx-plugin docker-compose-plugin \
     && rm -rf /var/lib/apt/lists/*
@@ -81,12 +84,19 @@ RUN curl -fsSL https://raw.githubusercontent.com/grafana/gcx/main/scripts/instal
 COPY tsh-linux-amd64 /usr/local/bin/tsh
 RUN chmod +x /usr/local/bin/tsh
 
+# Install uv / uvx (fast Python package & project manager).
+# System python3 (from Debian Trixie) is already 3.13, so uv will use it.
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
+
 # Remove the default 'node' user (UID 1000) that ships with the node image
 # so it doesn't conflict with UID remapping at runtime
 RUN userdel -r node
 
 # Install Claude Code globally
 RUN npm install -g @anthropic-ai/claude-code
+
+# Install pi (https://pi.dev) coding agent
+RUN npm install -g --ignore-scripts @earendil-works/pi-coding-agent
 
 # Create the coder user — UID/GID will be remapped at runtime
 RUN useradd -m -s /bin/bash coder \

@@ -5,11 +5,13 @@ IMAGE_NAME="claude-code"
 CONTAINER_NAME="claude-code-$(date +%s)"
 
 # ── Parse flags ─────────────────────────────────────────────────
-# Usage: run.sh [--ssh] [--aws] [--docker] [workspace] [-- claude args...]
-# Unknown flags (starting with -) are forwarded to claude.
+# Usage: run.sh [--ssh] [--aws] [--docker] [--bluetooth] [--pi] [workspace] [-- agent args...]
+# Unknown flags (starting with -) are forwarded to the agent (claude or pi).
 FORWARD_SSH=false
 FORWARD_AWS=false
 FORWARD_DOCKER=false
+FORWARD_BLUETOOTH=false
+PI_MODE=false
 CLAUDE_ARGS=()
 past_double_dash=false
 
@@ -22,6 +24,8 @@ for arg in "$@"; do
         --ssh) FORWARD_SSH=true ;;
         --aws) FORWARD_AWS=true ;;
         --docker) FORWARD_DOCKER=true ;;
+        --bluetooth) FORWARD_BLUETOOTH=true ;;
+        --pi)  PI_MODE=true ;;
         --)   past_double_dash=true ;;
         -*)   CLAUDE_ARGS+=("$arg") ;;
         *)
@@ -29,6 +33,12 @@ for arg in "$@"; do
             ;;
     esac
 done
+
+# pi uses AWS Bedrock as its backend, so AWS credentials must be forwarded.
+if [ "$PI_MODE" = true ] && [ "$FORWARD_AWS" != true ]; then
+    echo "❌ --pi requires --aws (pi uses AWS Bedrock as its backend)" >&2
+    exit 1
+fi
 
 WORKSPACE="${WORKSPACE:-.}"  # Default to current directory
 
@@ -44,6 +54,10 @@ CLAUDE_CONFIG_DIR="${HOME}/.claude-code-docker"
 CLAUDE_CONFIG_JSON="${HOME}/.claude-code-docker.json"
 mkdir -p "$CLAUDE_CONFIG_DIR"
 touch "$CLAUDE_CONFIG_JSON"
+
+# pi stores its settings and sessions in ~/.pi
+PI_CONFIG_DIR="${HOME}/.pi-docker"
+mkdir -p "$PI_CONFIG_DIR"
 
 ABSOLUTE_WORKSPACE="$(cd "$WORKSPACE" && pwd)"
 
@@ -123,6 +137,24 @@ if [ "$FORWARD_DOCKER" = true ]; then
     fi
 fi
 
+# ── Bluetooth (host BlueZ stack) ───────────────────────────────
+# The host runs bluetoothd; apps reach it over the system D-Bus socket.
+# Raw HCI/L2CAP sockets (BLE scan, hcitool, gatttool, pybluez) need
+# NET_RAW (open the socket) + NET_ADMIN (manage the adapter). The HCI
+# subsystem is bound to the network namespace, which is already shared
+# via the always-on --network host below.
+BLUETOOTH_DOCKER_ARGS=()
+if [ "$FORWARD_BLUETOOTH" = true ]; then
+    BLUETOOTH_DOCKER_ARGS+=(--cap-add=NET_ADMIN --cap-add=NET_RAW)
+    DBUS_SYS_SOCK="/run/dbus/system_bus_socket"
+    if [ -S "$DBUS_SYS_SOCK" ]; then
+        BLUETOOTH_DOCKER_ARGS+=(-v "$DBUS_SYS_SOCK":/run/dbus/system_bus_socket)
+        echo "📶 Bluetooth forwarding: enabled (NET_ADMIN+NET_RAW, system D-Bus mounted)"
+    else
+        echo "⚠️  --bluetooth: $DBUS_SYS_SOCK not found; capabilities added but bluetoothd is unreachable over D-Bus."
+    fi
+fi
+
 # ── Host browser opener ─────────────────────────────────────────
 # Random per-run password; daemon binds 127.0.0.1 on an OS-assigned port.
 # The container talks to it through the shared host network namespace.
@@ -161,7 +193,13 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "🚀 Starting Claude Code..."
+if [ "$PI_MODE" = true ]; then
+    echo "🥧 Starting pi (Bedrock backend, Claude Opus 4.7)..."
+    AGENT_CMD=(pi --provider amazon-bedrock --model eu.anthropic.claude-opus-4-7)
+else
+    echo "🚀 Starting Claude Code..."
+    AGENT_CMD=(claude --allowedTools "Bash,Edit,Read,Write,Glob,Grep,NotebookEdit,Agent,WebFetch,WebSearch,AskUserQuestion,CronCreate,CronDelete,CronList,EnterPlanMode,ExitPlanMode,EnterWorktree,ExitWorktree,Monitor,PushNotification,RemoteTrigger,ScheduleWakeup,Skill,TaskCreate,TaskGet,TaskList,TaskOutput,TaskStop,TaskUpdate,ToolSearch")
+fi
 echo ""
 echo "   On first run you'll be prompted to authenticate via browser."
 echo "   Credentials are persisted so you won't need to log in again."
@@ -182,9 +220,10 @@ docker run -it --rm \
     "${SSH_DOCKER_ARGS[@]+"${SSH_DOCKER_ARGS[@]}"}" \
     "${AWS_DOCKER_ARGS[@]+"${AWS_DOCKER_ARGS[@]}"}" \
     "${DOCKER_DOCKER_ARGS[@]+"${DOCKER_DOCKER_ARGS[@]}"}" \
+    "${BLUETOOTH_DOCKER_ARGS[@]+"${BLUETOOTH_DOCKER_ARGS[@]}"}" \
     -v "$ABSOLUTE_WORKSPACE":/home/coder/workspace \
     -v "$CLAUDE_CONFIG_DIR":/home/coder/.claude \
     -v "$CLAUDE_CONFIG_JSON":/home/coder/.claude.json \
-    "$IMAGE_NAME" claude \
-    --allowedTools "Bash,Edit,Read,Write,Glob,Grep,NotebookEdit,Agent,WebFetch,WebSearch,AskUserQuestion,CronCreate,CronDelete,CronList,EnterPlanMode,ExitPlanMode,EnterWorktree,ExitWorktree,Monitor,PushNotification,RemoteTrigger,ScheduleWakeup,Skill,TaskCreate,TaskGet,TaskList,TaskOutput,TaskStop,TaskUpdate,ToolSearch" \
+    -v "$PI_CONFIG_DIR":/home/coder/.pi \
+    "$IMAGE_NAME" "${AGENT_CMD[@]}" \
     "${CLAUDE_ARGS[@]+"${CLAUDE_ARGS[@]}"}"

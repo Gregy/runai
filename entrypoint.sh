@@ -43,6 +43,7 @@ fi
 # Fix ownership of the home directory itself (not recursively into mounted volumes)
 chown coder:$(id -g coder) /home/coder
 chown -R coder:$(id -g coder) /home/coder/.claude 2>/dev/null || true
+chown -R coder:$(id -g coder) /home/coder/.pi 2>/dev/null || true
 chown -R coder:$(id -g coder) /home/coder/.config 2>/dev/null || true
 chown coder:$(id -g coder) /home/coder/workspace 2>/dev/null || true
 
