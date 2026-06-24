@@ -44,6 +44,16 @@ WORKSPACE="${WORKSPACE:-.}"  # Default to current directory
 
 # ── Build the image ──────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# The Teleport tsh client binary is required at build time (see Dockerfile).
+# It is large and not tracked in git, so it must be downloaded separately.
+if [ ! -f "$SCRIPT_DIR/tsh-linux-amd64" ]; then
+    echo "⚠️  Missing tsh-linux-amd64 in $SCRIPT_DIR" >&2
+    echo "⚠️  Download the Teleport tsh client (linux-amd64) and place it there as 'tsh-linux-amd64' before running." >&2
+    echo "⚠️  Download our tsh version from https://gitlab.rossum.cloud/deployments/teleport/-/releases" >&2
+    exit 1
+fi
+
 echo "🔨 Building Claude Code Docker image..."
 docker build -t "$IMAGE_NAME" -f "$SCRIPT_DIR/Dockerfile" "$SCRIPT_DIR"
 
