@@ -39,6 +39,12 @@ RUN curl -fsSL "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release
 RUN curl -fsSL "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash \
     && mv kustomize /usr/local/bin/kustomize
 
+# Install Flux GitOps toolkit CLI (flux) — official upstream install script
+# https://fluxcd.io/flux/installation/
+ARG FLUX_VERSION=2.9.2
+RUN curl -fsSL https://fluxcd.io/install.sh \
+        | FLUX_VERSION=${FLUX_VERSION} bash
+
 # Install Terraform
 RUN curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg \
     && echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com trixie main" \
