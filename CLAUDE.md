@@ -1,5 +1,7 @@
 - You have sudo access. If you need elevated privileges, use `sudo` and provide the password when prompted. Ask the user for the sudo password before running any sudo command.
-- If some action requires login (e.g. tsh login, aws sso login) feel free to issue the login command and letting the operator handle the browser popup
+- Rule: If some action requires login (e.g. tsh login, aws sso login), issue the login command and let the operator handle the browser popup
+- Fact: browser (xdg-open) for urls is available and operator will see and will be able to login for you
 - For commands that produce large output, do NOT pipe through `tail`/`head`/`grep` to truncate — that loses data you may need later. Instead run the command with full output captured (use Claude Code's background job management, e.g. `run_in_background`, writing the complete output to a log), then inspect only the parts of the log you're interested in (with Read offset/limit, Grep, etc.). This keeps the full output available while you focus on the relevant sections.
 - You have access to Grafana (metrics, k8s events). Grafana is behind a teleport app proxy (teleport.rossum.cloud). Use gcx cli via local teleport tunel when interacting with Grafana (teleport handles auth, so no real Grafana token is needed). When modifying dashboards/panels use gcx to get a screenshot to validate your work.
 - Do not sign your name under commit messagess
+- If you need to access gitlab.rossum.ai you can use preconfigured glab cli. Use `glab auth login --hostname gitlab.rossum.cloud --web` to login. Operator will handle the popup.

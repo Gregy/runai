@@ -54,8 +54,20 @@ if [ ! -f "$SCRIPT_DIR/tsh-linux-amd64" ]; then
     exit 1
 fi
 
+# Site-specific build settings (e.g. GLAB_HOST, GLAB_CLIENT_ID) live in the
+# untracked local.env next to this script; see README.
+GLAB_HOST=""
+GLAB_CLIENT_ID=""
+if [ -f "$SCRIPT_DIR/local.env" ]; then
+    # shellcheck source=/dev/null
+    . "$SCRIPT_DIR/local.env"
+fi
+
 echo "🔨 Building Claude Code Docker image..."
-docker build -t "$IMAGE_NAME" -f "$SCRIPT_DIR/Dockerfile" "$SCRIPT_DIR"
+docker build -t "$IMAGE_NAME" -f "$SCRIPT_DIR/Dockerfile" \
+    --build-arg GLAB_HOST="$GLAB_HOST" \
+    --build-arg GLAB_CLIENT_ID="$GLAB_CLIENT_ID" \
+    "$SCRIPT_DIR"
 
 # ── Prepare persistent config directory ──────────────────────────
 # OAuth tokens are stored in ~/.claude. We persist this on the host

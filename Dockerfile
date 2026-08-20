@@ -2,7 +2,9 @@
 # Node 22+ required by pi 0.75+.
 FROM node:22-trixie
 
-# Install useful dev tools and dependencies
+# Install useful dev tools and dependencies.
+# The python3-{requests,cryptography,pypdf} packages are for the expense
+# submission script.
 RUN apt-get update && apt-get install -y \
     git \
     git-lfs \
@@ -20,6 +22,9 @@ RUN apt-get update && apt-get install -y \
     postgresql-client \
     unzip \
     bc \
+    python3-requests \
+    python3-cryptography \
+    python3-pypdf \
     && rm -rf /var/lib/apt/lists/* \
     && pip3 install --break-system-packages pre-commit \
     && git lfs install --system --skip-repo
@@ -108,6 +113,22 @@ RUN npm install -g --ignore-scripts @earendil-works/pi-coding-agent
 RUN useradd -m -s /bin/bash coder \
     && echo "coder:abrakadabra" | chpasswd \
     && usermod -aG sudo coder
+
+# Optionally pre-configure glab for a self-hosted GitLab and make it the default
+# host. Both values come from the untracked local.env via run.sh (see README);
+# without them this step is skipped. Only the OAuth application client_id is
+# baked in — no credentials. Log in from inside the container with (opens a
+# browser via host-browser):
+#   glab auth login --hostname <GLAB_HOST> --web
+ARG GLAB_HOST=
+ARG GLAB_CLIENT_ID=
+RUN if [ -n "$GLAB_HOST" ] && [ -n "$GLAB_CLIENT_ID" ]; then \
+        export GLAB_CONFIG_DIR=/home/coder/.config/glab-cli \
+        && glab config set client_id "$GLAB_CLIENT_ID" -g --host "$GLAB_HOST" \
+        && glab config set host "$GLAB_HOST" -g; \
+    fi \
+    && mkdir -p /home/coder/.config \
+    && chown -R coder:coder /home/coder/.config
 
 COPY entrypoint.sh /entrypoint.sh
 COPY CLAUDE.md /home/coder/CLAUDE.md

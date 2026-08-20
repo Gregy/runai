@@ -1,2 +1,5 @@
 # Teleport tsh client binary (large, downloaded separately — see run.sh)
 tsh-linux-amd64
+
+# Site-specific settings, never committed (see README)
+local.env
