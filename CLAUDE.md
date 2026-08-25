@@ -5,3 +5,4 @@
 - You have access to Grafana (metrics, k8s events). Grafana is behind a teleport app proxy (teleport.rossum.cloud). Use gcx cli via local teleport tunel when interacting with Grafana (teleport handles auth, so no real Grafana token is needed). When modifying dashboards/panels use gcx to get a screenshot to validate your work.
 - Do not sign your name under commit messagess
 - If you need to access gitlab.rossum.ai you can use preconfigured glab cli. Use `glab auth login --hostname gitlab.rossum.cloud --web` to login. Operator will handle the popup.
+- If you are reviewing MRs use glab to put your comments directly on the MR as a draft notes (unpublished review comments).
