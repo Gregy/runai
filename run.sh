@@ -177,41 +177,50 @@ if [ "$FORWARD_BLUETOOTH" = true ]; then
     fi
 fi
 
-# ── Host browser opener ─────────────────────────────────────────
+# ── Host bridge (browser + clipboard) ───────────────────────────
 # Random per-run password; daemon binds 127.0.0.1 on an OS-assigned port.
 # The container talks to it through the shared host network namespace.
-HOST_BROWSER_PASS=$(openssl rand -hex 24)
-HOST_BROWSER_PORTFILE=$(mktemp)
-HOST_BROWSER_PID=""
-HOST_BROWSER_PASS="$HOST_BROWSER_PASS" \
-    python3 "$SCRIPT_DIR/host-browser-opener.py" "$HOST_BROWSER_PORTFILE" \
+HOST_BRIDGE_PASS=$(openssl rand -hex 24)
+HOST_BRIDGE_PORTFILE=$(mktemp)
+HOST_BRIDGE_PID=""
+HOST_BRIDGE_PASS="$HOST_BRIDGE_PASS" \
+    python3 "$SCRIPT_DIR/host-bridge.py" "$HOST_BRIDGE_PORTFILE" \
     >/dev/null &
-HOST_BROWSER_PID=$!
+HOST_BRIDGE_PID=$!
 
-HOST_BROWSER_PORT=""
+HOST_BRIDGE_PORT=""
 for _ in $(seq 1 50); do
-    if [ -s "$HOST_BROWSER_PORTFILE" ]; then
-        HOST_BROWSER_PORT=$(cat "$HOST_BROWSER_PORTFILE")
+    if [ -s "$HOST_BRIDGE_PORTFILE" ]; then
+        HOST_BRIDGE_PORT=$(cat "$HOST_BRIDGE_PORTFILE")
         break
     fi
     sleep 0.1
 done
-rm -f "$HOST_BROWSER_PORTFILE"
+rm -f "$HOST_BRIDGE_PORTFILE"
 
-if [ -z "$HOST_BROWSER_PORT" ]; then
-    echo "❌ Failed to start host browser opener daemon" >&2
-    kill "$HOST_BROWSER_PID" 2>/dev/null || true
+if [ -z "$HOST_BRIDGE_PORT" ]; then
+    echo "❌ Failed to start host bridge daemon" >&2
+    kill "$HOST_BRIDGE_PID" 2>/dev/null || true
     exit 1
 fi
-HOST_BROWSER_URL="http://127.0.0.1:${HOST_BROWSER_PORT}/"
-echo "🌐 Host browser opener: listening on $HOST_BROWSER_URL"
+HOST_BRIDGE_URL="http://127.0.0.1:${HOST_BRIDGE_PORT}/"
+echo "🌐 Host bridge: listening on $HOST_BRIDGE_URL"
+
+# Clipboard writes from the container need a clipboard tool on the *host*.
+if command -v wl-copy >/dev/null 2>&1 || command -v xclip >/dev/null 2>&1 \
+        || command -v xsel >/dev/null 2>&1; then
+    echo "📋 Host clipboard bridge: enabled (container writes only)"
+else
+    echo "⚠️  No wl-copy/xclip/xsel on the host — clipboard bridge will be unavailable."
+    echo "⚠️  Install wl-clipboard (Wayland) or xclip/xsel (X11) to enable it."
+fi
 
 # ── Cleanup temporary files on exit ────────────────────────────
 cleanup() {
     [ -n "$AWS_TMPDIR" ] && rm -rf "$AWS_TMPDIR"
     [ -n "$GIT_TMPDIR" ] && rm -rf "$GIT_TMPDIR"
     [ -n "$SSH_TMPDIR" ] && rm -rf "$SSH_TMPDIR"
-    [ -n "$HOST_BROWSER_PID" ] && kill "$HOST_BROWSER_PID" 2>/dev/null || true
+    [ -n "$HOST_BRIDGE_PID" ] && kill "$HOST_BRIDGE_PID" 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -236,8 +245,8 @@ docker run -it --rm \
     --security-opt label=disable \
     -e HOST_UID="$(id -u)" \
     -e HOST_GID="$(id -g)" \
-    -e HOST_BROWSER_URL="$HOST_BROWSER_URL" \
-    -e HOST_BROWSER_PASS="$HOST_BROWSER_PASS" \
+    -e HOST_BRIDGE_URL="$HOST_BRIDGE_URL" \
+    -e HOST_BRIDGE_PASS="$HOST_BRIDGE_PASS" \
     "${GIT_DOCKER_ARGS[@]+"${GIT_DOCKER_ARGS[@]}"}" \
     "${SSH_DOCKER_ARGS[@]+"${SSH_DOCKER_ARGS[@]}"}" \
     "${AWS_DOCKER_ARGS[@]+"${AWS_DOCKER_ARGS[@]}"}" \

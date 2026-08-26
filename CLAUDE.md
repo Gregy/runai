@@ -6,3 +6,6 @@
 - Do not sign your name under commit messagess
 - If you need to access gitlab.rossum.ai you can use preconfigured glab cli. Use `glab auth login --hostname gitlab.rossum.cloud --web` to login. Operator will handle the popup.
 - If you are reviewing MRs use glab to put your comments directly on the MR as a draft notes (unpublished review comments).
+- When adding draft notes to MRs prefer to use line number range to anchor the note if the code you are commenting is between 2 and 20 lines.
+- Fact: the host clipboard is writable from inside the container (write-only, via the host bridge). Pipe text to `host-clipboard`, or let a tool use the `xsel`/`xclip` shims. Reading the host clipboard is deliberately not possible.
+- To log in to GitHub, run `gh-login`. It wraps `gh auth login --web --clipboard --git-protocol https`, opens the device page in the operator's browser through the host bridge, and leaves the one-time code in the operator's clipboard to paste.

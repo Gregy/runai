@@ -132,13 +132,21 @@ RUN if [ -n "$GLAB_HOST" ] && [ -n "$GLAB_CLIENT_ID" ]; then \
 
 COPY entrypoint.sh /entrypoint.sh
 COPY CLAUDE.md /home/coder/CLAUDE.md
-COPY host-browser /usr/local/bin/host-browser
-RUN chmod +x /entrypoint.sh /usr/local/bin/host-browser \
+COPY host-browser host-clipboard host-clipboard-xshim gh-login /usr/local/bin/
+RUN chmod +x /entrypoint.sh \
+        /usr/local/bin/host-browser \
+        /usr/local/bin/host-clipboard \
+        /usr/local/bin/host-clipboard-xshim \
+        /usr/local/bin/gh-login \
     && ln -s /usr/local/bin/host-browser /usr/local/bin/xdg-open \
+    && ln -s /usr/local/bin/host-clipboard-xshim /usr/local/bin/xsel \
+    && ln -s /usr/local/bin/host-clipboard-xshim /usr/local/bin/xclip \
     && chown coder:coder /home/coder/CLAUDE.md
 
 # Route URL-opening tools (gh, gcloud, aws sso, claude, ...) through the
-# host-side opener daemon started by run.sh.
+# host bridge daemon started by run.sh. The xsel/xclip symlinks above do the
+# same for clipboard writes, so e.g. `gh auth login --web --clipboard` puts the
+# one-time code straight into the host clipboard, ready to paste.
 ENV BROWSER=/usr/local/bin/host-browser
 
 WORKDIR /home/coder/workspace

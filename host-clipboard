@@ -1,0 +1,20 @@
+#!/bin/sh
+# In-container shim that copies stdin to the *host* clipboard via the host
+# bridge daemon, e.g.:
+#
+#   printf 'ABCD-1234' | host-clipboard
+#
+# Write-only by design: the bridge exposes no way to read the host clipboard
+# back, since it routinely holds passwords.
+set -eu
+
+if [ -z "${HOST_BRIDGE_URL:-}" ] || [ -z "${HOST_BRIDGE_PASS:-}" ]; then
+    echo "host-clipboard: HOST_BRIDGE_URL / HOST_BRIDGE_PASS not set" >&2
+    exit 1
+fi
+
+exec curl -fsS \
+    -u "container:$HOST_BRIDGE_PASS" \
+    -H 'Content-Type: text/plain; charset=utf-8' \
+    --data-binary @- \
+    "${HOST_BRIDGE_URL}clipboard" >/dev/null

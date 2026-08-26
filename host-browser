@@ -1,5 +1,5 @@
 #!/bin/sh
-# In-container shim that asks the host daemon to open a URL.
+# In-container shim that asks the host bridge daemon to open a URL.
 # Used as $BROWSER so OAuth-style CLIs trigger the host browser.
 set -eu
 
@@ -8,12 +8,12 @@ if [ -z "$url" ]; then
     echo "host-browser: no URL argument" >&2
     exit 1
 fi
-if [ -z "${HOST_BROWSER_URL:-}" ] || [ -z "${HOST_BROWSER_PASS:-}" ]; then
-    echo "host-browser: HOST_BROWSER_URL / HOST_BROWSER_PASS not set" >&2
+if [ -z "${HOST_BRIDGE_URL:-}" ] || [ -z "${HOST_BRIDGE_PASS:-}" ]; then
+    echo "host-browser: HOST_BRIDGE_URL / HOST_BRIDGE_PASS not set" >&2
     exit 1
 fi
 
 exec curl -fsS \
-    -u "container:$HOST_BROWSER_PASS" \
+    -u "container:$HOST_BRIDGE_PASS" \
     --data-urlencode "url=$url" \
-    "$HOST_BROWSER_URL" >/dev/null
+    "${HOST_BRIDGE_URL}open" >/dev/null

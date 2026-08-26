@@ -1,0 +1,57 @@
+#!/bin/sh
+# Log in to GitHub from inside the container, without needing a TTY.
+#
+# `gh auth login --web` only opens a browser when it has a TTY; head-less it
+# prints the device URL instead and polls for the code. Wrapping gh in `script`
+# to fake a TTY works but is fragile, so instead we run gh head-less on purpose
+# and open the URL ourselves through the host bridge. `--clipboard` puts the
+# one-time code straight into the operator's clipboard (via the xsel shim), so
+# it is ready to paste into the page we just opened.
+#
+# Extra arguments are passed through to `gh auth login`, and override the
+# defaults set here, e.g.:  gh-login --hostname ghe.example.com -s read:project
+set -eu
+
+LOG=$(mktemp)
+trap 'rm -f "$LOG"' EXIT
+
+gh auth login --web --clipboard --git-protocol https "$@" </dev/null >"$LOG" 2>&1 &
+gh_pid=$!
+
+# Echo whatever gh has written since the last call, so its prompts and errors
+# reach the caller in order instead of arriving in one lump at the end.
+shown=0
+show_new() {
+    size=$(wc -c <"$LOG")
+    if [ "$size" -gt "$shown" ]; then
+        tail -c "+$((shown + 1))" "$LOG"
+        shown=$size
+    fi
+}
+
+# gh prints the device URL within a second or so; wait up to 30s for it.
+url=""
+i=0
+while [ "$i" -lt 150 ]; do
+    url=$(grep -o 'https://[^ ]*/login/device[^ ]*' "$LOG" | head -n1 || true)
+    [ -n "$url" ] && break
+    kill -0 "$gh_pid" 2>/dev/null || break
+    sleep 0.2
+    i=$((i + 1))
+done
+show_new
+
+if [ -n "$url" ]; then
+    if host-browser "$url"; then
+        echo "gh-login: opened $url in the host browser — paste the code above."
+    else
+        echo "gh-login: could not open the host browser; visit $url yourself." >&2
+    fi
+else
+    echo "gh-login: gh never printed a device URL (see output above)." >&2
+fi
+
+rc=0
+wait "$gh_pid" || rc=$?
+show_new
+exit "$rc"

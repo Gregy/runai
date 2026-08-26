@@ -1,0 +1,23 @@
+#!/bin/sh
+# Installed as `xsel` and `xclip` inside the container so that CLIs which shell
+# out to an X clipboard tool reach the host clipboard instead. Notably gh:
+# `gh auth login --web --clipboard` embeds atotto/clipboard, which looks for
+# `xsel`, then `xclip`, when $WAYLAND_DISPLAY is unset (as it is in here).
+#
+# Only the write direction is supported. Read requests (`-o`, `--output`,
+# xclip's `-out`) fail loudly rather than silently returning nothing, because
+# the bridge deliberately refuses to hand the host clipboard to the container.
+set -eu
+
+for arg in "$@"; do
+    case "$arg" in
+        -o|-o[a-z]*|--output*)
+            echo "${0##*/}: reading the host clipboard is not supported by the host bridge" >&2
+            exit 1
+            ;;
+    esac
+done
+
+# Resolve host-clipboard next to this script rather than trusting $PATH,
+# since we are usually invoked as the `xsel`/`xclip` symlink.
+exec "$(dirname "$0")/host-clipboard"
