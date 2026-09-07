@@ -156,7 +156,9 @@ RUN chmod +x /entrypoint.sh \
 # one-time code straight into the host clipboard, ready to paste.
 ENV BROWSER=/usr/local/bin/host-browser
 
-WORKDIR /home/coder/workspace
+# Fallback working directory only: run.sh overrides it with -w so the workspace
+# is mounted at the same absolute path inside the container as on the host.
+WORKDIR /home/coder
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["claude"]

@@ -7,6 +7,8 @@ CONTAINER_NAME="claude-code-$(date +%s)"
 # ── Parse flags ─────────────────────────────────────────────────
 # Usage: run.sh [--ssh] [--aws] [--docker] [--bluetooth] [--pi] [workspace] [-- agent args...]
 # Unknown flags (starting with -) are forwarded to the agent (claude or pi).
+# Env: WORKSPACE=<dir> picks the workspace (default: cwd);
+#      ALLOW_UNSAFE_WORKSPACE_PATH=1 skips the workspace path collision check.
 FORWARD_SSH=false
 FORWARD_AWS=false
 FORWARD_DOCKER=false
@@ -83,9 +85,35 @@ mkdir -p "$PI_CONFIG_DIR"
 
 ABSOLUTE_WORKSPACE="$(cd "$WORKSPACE" && pwd)"
 
-echo "📂 Mounting workspace: $ABSOLUTE_WORKSPACE"
+# The workspace is mounted at the *same* path inside the container as on the
+# host, so paths printed inside the container are valid outside it too.
+echo "📂 Mounting workspace: $ABSOLUTE_WORKSPACE (same path inside the container)"
 echo "🔑 OAuth credentials stored in: $CLAUDE_CONFIG_DIR"
 echo "🆔 Running as UID=$(id -u) GID=$(id -g)"
+
+# ── Workspace path collision check ─────────────────────────────
+# Because the workspace is mounted at its host path, that path could collide
+# with a directory the image already ships (/usr, /etc, /home/coder, ...). The
+# mount would shadow the image's own files and break the container — for /usr
+# even before the entrypoint can run. Ask the image itself instead of keeping a
+# list of paths in sync here: a non-empty target inside the image is a conflict.
+if [ "${ALLOW_UNSAFE_WORKSPACE_PATH:-}" != "1" ]; then
+    if IMAGE_PATH_CONTENTS=$(docker run --rm --entrypoint sh \
+            -e CHECK_PATH="$ABSOLUTE_WORKSPACE" "$IMAGE_NAME" \
+            -c 'ls -A "$CHECK_PATH" 2>/dev/null | head -5 | tr "\n" " "'); then
+        if [ -n "$IMAGE_PATH_CONTENTS" ]; then
+            echo "❌ Refusing to mount the workspace at $ABSOLUTE_WORKSPACE" >&2
+            echo "❌ That path already exists in the container image and is not empty:" >&2
+            echo "❌   $IMAGE_PATH_CONTENTS" >&2
+            echo "❌ Mounting the workspace there would hide the image's own files and" >&2
+            echo "❌ break the container. Start the agent from a different directory, or" >&2
+            echo "❌ set ALLOW_UNSAFE_WORKSPACE_PATH=1 to mount it anyway." >&2
+            exit 1
+        fi
+    else
+        echo "⚠️  Could not check $ABSOLUTE_WORKSPACE against the image; continuing." >&2
+    fi
+fi
 
 # ── AWS credentials forwarding ─────────────────────────────────
 AWS_DOCKER_ARGS=()
@@ -247,12 +275,14 @@ docker run -it --rm \
     -e HOST_GID="$(id -g)" \
     -e HOST_BRIDGE_URL="$HOST_BRIDGE_URL" \
     -e HOST_BRIDGE_PASS="$HOST_BRIDGE_PASS" \
+    -e WORKSPACE_DIR="$ABSOLUTE_WORKSPACE" \
+    -w "$ABSOLUTE_WORKSPACE" \
     "${GIT_DOCKER_ARGS[@]+"${GIT_DOCKER_ARGS[@]}"}" \
     "${SSH_DOCKER_ARGS[@]+"${SSH_DOCKER_ARGS[@]}"}" \
     "${AWS_DOCKER_ARGS[@]+"${AWS_DOCKER_ARGS[@]}"}" \
     "${DOCKER_DOCKER_ARGS[@]+"${DOCKER_DOCKER_ARGS[@]}"}" \
     "${BLUETOOTH_DOCKER_ARGS[@]+"${BLUETOOTH_DOCKER_ARGS[@]}"}" \
-    -v "$ABSOLUTE_WORKSPACE":/home/coder/workspace \
+    -v "$ABSOLUTE_WORKSPACE":"$ABSOLUTE_WORKSPACE" \
     -v "$CLAUDE_CONFIG_DIR":/home/coder/.claude \
     -v "$CLAUDE_CONFIG_JSON":/home/coder/.claude.json \
     -v "$PI_CONFIG_DIR":/home/coder/.pi \

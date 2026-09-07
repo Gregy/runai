@@ -45,7 +45,14 @@ chown coder:$(id -g coder) /home/coder
 chown -R coder:$(id -g coder) /home/coder/.claude 2>/dev/null || true
 chown -R coder:$(id -g coder) /home/coder/.pi 2>/dev/null || true
 chown -R coder:$(id -g coder) /home/coder/.config 2>/dev/null || true
-chown coder:$(id -g coder) /home/coder/workspace 2>/dev/null || true
+
+# The workspace lives at the same absolute path as on the host (run.sh passes
+# WORKSPACE_DIR and -w). Create it if the bind mount did not, then make it the
+# working directory for the agent.
+WORKSPACE_DIR="${WORKSPACE_DIR:-$PWD}"
+mkdir -p "$WORKSPACE_DIR"
+chown coder:$(id -g coder) "$WORKSPACE_DIR" 2>/dev/null || true
+cd "$WORKSPACE_DIR"
 
 # Run the actual command as the coder user
 # Note: the SSH agent socket (if mounted) is already accessible because
