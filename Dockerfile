@@ -109,6 +109,13 @@ RUN npm install -g @anthropic-ai/claude-code
 # Install pi (https://pi.dev) coding agent
 RUN npm install -g --ignore-scripts @earendil-works/pi-coding-agent
 
+# Install clasp (Google Apps Script CLI)
+# https://github.com/google/clasp
+# Log in from inside the container with (opens a browser via host-browser):
+#   clasp login
+ARG CLASP_VERSION=3.4.1
+RUN npm install -g @google/clasp@${CLASP_VERSION}
+
 # Create the coder user — UID/GID will be remapped at runtime
 RUN useradd -m -s /bin/bash coder \
     && echo "coder:abrakadabra" | chpasswd \
