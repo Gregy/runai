@@ -2,16 +2,13 @@
 """Host-side daemon serving container -> host requests over loopback HTTP.
 
 Endpoints (all POST, HTTP Basic auth as user "container"):
-  /open        form-encoded "url=<http(s) URL>"  -> opens it in the host browser
-  /clipboard   raw request body (UTF-8)          -> copies it to the host clipboard,
-               typed by Content-Type: text/plain (default) or text/html
-  /clipboard/alternatives
-               JSON {"text/html": "...", "text/plain": "..."} -> the same content
-               in several formats at once, like a browser or spreadsheet copy:
-               an email client pastes the HTML, a terminal pastes the text.
-               Replies with X-Clipboard-Types listing the formats actually
-               offered (fewer than requested if the host can't hold several).
-  /            alias for /open (kept for older container images)
+  /open        form-encoded "url=<http(s) URL>" -> opens it in the host browser
+  /clipboard   JSON {mime: base64 data}         -> copies it to the host clipboard.
+               Several formats are offered together, like a browser or
+               spreadsheet copy: an email client pastes the HTML, a terminal
+               the plain text. Replies with X-Clipboard-Types listing the
+               formats actually offered (fewer than requested if the host
+               can't hold several).
 
 Binds to 127.0.0.1 on an OS-assigned port and requires HTTP Basic auth
 (username "container", password from $HOST_BRIDGE_PASS). Prints the
@@ -135,7 +132,7 @@ def write_multi(contents):
     helper can run here (no X display, no GTK 4), so the caller can fall back."""
     if not os.environ.get("DISPLAY"):
         return False
-    payload = json.dumps({m: d.decode("utf-8") for m, d in contents.items()}).encode()
+    payload = json.dumps({m: base64.b64encode(d).decode() for m, d in contents.items()}).encode()
     # Force X11: a windowless Wayland client is not allowed to take the
     # selection, while an X11 one is, and XWayland passes it on to
     # Wayland-native apps.
@@ -183,7 +180,7 @@ def write_multi(contents):
 
 def hold_clipboard():
     """--hold-clipboard: own the clipboard with every format from the JSON
-    {mime: text} on stdin, until something else takes it over.
+    {mime: base64 data} on stdin, until something else takes it over.
 
     Prints one status line to stdout ("ok", "unavailable: ...", or
     "error: ...") and, once it owns the clipboard, detaches from stdout and
@@ -207,8 +204,8 @@ def hold_clipboard():
     clipboard = Gdk.Display.get_default().get_clipboard()
 
     providers = []
-    for mime, text in contents.items():
-        data = GLib.Bytes.new(text.encode("utf-8"))
+    for mime, b64 in contents.items():
+        data = GLib.Bytes.new(base64.b64decode(b64))
         # GTK maps text/plain;charset=utf-8 to UTF8_STRING, STRING, TEXT etc.
         # for X clients; plain "text/plain" is for apps that ask for exactly that.
         for target in (["text/plain;charset=utf-8", "text/plain"] if mime == "text/plain" else [mime]):
@@ -234,16 +231,11 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             return
 
-        route = urllib.parse.urlparse(self.path).path.rstrip("/") or "/open"
-        if route == "/":
-            route = "/open"
-
+        route = urllib.parse.urlparse(self.path).path.rstrip("/")
         if route == "/open":
             self.handle_open()
         elif route == "/clipboard":
             self.handle_clipboard()
-        elif route == "/clipboard/alternatives":
-            self.handle_clipboard_alternatives()
         else:
             self.reply(404, f"unknown endpoint: {route}\n")
 
@@ -274,33 +266,17 @@ class Handler(BaseHTTPRequestHandler):
         body = self.read_body(MAX_CLIPBOARD_BYTES)
         if body is None:
             return
-        mime = (self.headers.get("Content-Type") or "text/plain").split(";")[0].strip().lower()
-        if mime not in CLIPBOARD_TYPES:
-            self.reply(415, f"unsupported clipboard type {mime!r}; use one of {', '.join(CLIPBOARD_TYPES)}\n")
-            return
-        self.copy({mime: body})
-
-    def handle_clipboard_alternatives(self):
-        body = self.read_body(MAX_CLIPBOARD_BYTES)
-        if body is None:
-            return
         try:
-            contents = json.loads(body)
-        except ValueError:
-            self.reply(400, "body must be a JSON object {mime: text}\n")
-            return
-        if (not isinstance(contents, dict) or not contents
-                or not all(isinstance(v, str) for v in contents.values())):
-            self.reply(400, "body must be a non-empty JSON object {mime: text}\n")
+            contents = {m: base64.b64decode(v, validate=True) for m, v in json.loads(body).items()}
+            if not contents:
+                raise ValueError
+        except (ValueError, TypeError, AttributeError):
+            self.reply(400, "body must be a JSON object {mime: base64 data}\n")
             return
         unknown = sorted(set(contents) - set(CLIPBOARD_TYPES))
         if unknown:
             self.reply(415, f"unsupported clipboard type(s) {', '.join(unknown)}; use {', '.join(CLIPBOARD_TYPES)}\n")
             return
-        self.copy({m: v.encode("utf-8") for m, v in contents.items()})
-
-    def copy(self, contents):
-        """Put {mime: bytes} on the host clipboard, all formats if possible."""
         if "text/html" in contents:
             contents["text/html"] = with_charset(contents["text/html"].decode("utf-8", errors="replace")).encode()
         offered = [m for m in CLIPBOARD_TYPES if m in contents]

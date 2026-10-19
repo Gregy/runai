@@ -208,21 +208,21 @@ def read_input(files):
     return data
 
 
-def post(path, body, content_type):
+def copy(contents):
+    """Send {mime: bytes} to the bridge; returns the formats it offered."""
     url = os.environ.get("HOST_BRIDGE_URL")
     password = os.environ.get("HOST_BRIDGE_PASS")
     if not url or not password:
         sys.exit(f"{PROG}: HOST_BRIDGE_URL / HOST_BRIDGE_PASS not set")
-    req = urllib.request.Request(url + path, data=body, method="POST", headers={
-        "Content-Type": content_type,
+    body = json.dumps({m: base64.b64encode(d).decode() for m, d in contents.items()}).encode()
+    req = urllib.request.Request(url + "clipboard", data=body, method="POST", headers={
+        "Content-Type": "application/json",
         "Authorization": "Basic " + base64.b64encode(f"container:{password}".encode()).decode(),
     })
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             return resp.headers.get("X-Clipboard-Types", "")
     except urllib.error.HTTPError as e:
-        if e.code == 404 and path != "clipboard":
-            sys.exit(f"{PROG}: the host bridge is too old for this; restart it (re-run run.sh)")
         detail = e.read().decode("utf-8", errors="replace").strip()
         sys.exit(f"{PROG}: host bridge refused the copy (HTTP {e.code}): {detail}")
     except (urllib.error.URLError, OSError) as e:
@@ -249,17 +249,14 @@ def main():
 
     data = read_input(args.files)
     if mime == "text/plain":
-        post("clipboard", data, "text/plain; charset=utf-8")
+        copy({"text/plain": data})
         return
 
-    html = data.decode("utf-8", errors="replace")
     if args.text:
-        text = read_input([args.text]).decode("utf-8", errors="replace")
+        text = read_input([args.text])
     else:
-        text = html_to_text(html)
-    offered = post("clipboard/alternatives",
-                   json.dumps({"text/html": html, "text/plain": text}).encode(),
-                   "application/json")
+        text = html_to_text(data.decode("utf-8", errors="replace")).encode()
+    offered = copy({"text/html": data, "text/plain": text})
     if "text/plain" not in offered:
         print(f"{PROG}: warning: the host could only offer {offered or 'text/html'}, so pasting "
               "into a terminal or plain-text field gives raw HTML (install python3-gobject "
