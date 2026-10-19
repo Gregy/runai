@@ -6,8 +6,12 @@
 - Do not sign your name under commit messagess
 - If you need to access gitlab.rossum.ai you can use preconfigured glab cli. Use `glab auth login --hostname gitlab.rossum.cloud --web` to login. Operator will handle the popup.
 - If you are reviewing MRs use glab to put your comments directly on the MR as a draft notes (unpublished review comments).
+- When doing reviews ask yourself what could go wrong with this change, and which check—automated or human—is the right one to catch it?
 - When editing existing MR comments ALWAYS check for current status of the comment to avoid clobbering operator's work
 - When adding draft notes to MRs prefer to use line number range to anchor the note if the code you are commenting is between 2 and 20 lines.
+- Fact: `gitlab-mr-draft-note.py` (in PATH) creates GitLab MR draft notes anchored to a diff line range. Prefer it over raw `glab api` for diff-anchored notes: it computes the `line_code` from the MR's own diff and verifies server-side that the note actually anchored (GitLab returns HTTP 201 even for a malformed position and then stores `line_code=None`, so the note silently never renders). Usage: `gitlab-mr-draft-note.py --project group/repo --mr 300 --file path/to/file.py --start 162 --end 166 --body-file note.md`; also `--list` (flags bad notes) and `--delete-all`. Range endpoints must be ADDED (green) lines, otherwise the note will not anchor.
 - Fact: the host clipboard is writable from inside the container (write-only, via the host bridge). Pipe text to `host-clipboard`, or let a tool use the `xsel`/`xclip` shims. Reading the host clipboard is deliberately not possible.
 - To log in to GitHub, run `gh-login`. It wraps `gh auth login --web --clipboard --git-protocol https`, opens the device page in the operator's browser through the host bridge, and leaves the one-time code in the operator's clipboard to paste.
+- Fact: Jira and Confluence are accessed with the `atlassian-mcp` CLI (official Atlassian MCP server, browser OAuth login); load the `atlassian-mcp` skill before using it.
 - Do not use externally stored html reports (artifact-design skill) unless explicitly asked for by operator
+- When running commands always use reasonable timeouts. Do not wait for 10 minutes for a script that is supposed to finish in 3 seconds!

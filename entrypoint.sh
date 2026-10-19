@@ -40,6 +40,11 @@ if [ -S /var/run/docker.sock ]; then
     fi
 fi
 
+# Install the skills shipped with the image (overwrites same-named skills, so
+# the image stays the source of truth). Ownership is fixed just below.
+mkdir -p /home/coder/.claude/skills
+cp -r /opt/claude-skills/. /home/coder/.claude/skills/
+
 # Fix ownership of the home directory itself (not recursively into mounted volumes)
 chown coder:$(id -g coder) /home/coder
 chown -R coder:$(id -g coder) /home/coder/.claude 2>/dev/null || true

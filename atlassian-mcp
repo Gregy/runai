@@ -1,0 +1,381 @@
+#!/usr/bin/env python3
+"""CLI over the official Atlassian Rovo MCP server (Jira, Confluence, ...).
+
+Why this exists: the MCP server is the only Atlassian API surface that offers
+browser (OAuth) login *and* full Confluence read/write/search. This script
+does the MCP OAuth dance itself (dynamic client registration + PKCE, callback
+on 127.0.0.1) and exposes the server's tools on the command line.
+
+Usage:
+  atlassian-mcp login                      # opens the browser
+  atlassian-mcp status | logout
+  atlassian-mcp tools [-f confluence]      # list tools
+  atlassian-mcp tools getConfluenceContent # show one tool's input schema
+  atlassian-mcp call searchConfluence cql='title ~ "runbook"'
+  atlassian-mcp call updateConfluenceContent id=123 body=@page.md version:=5
+
+Arguments for `call`: key=value (string), key:=value (JSON), and a value
+starting with @ is read from that file (key=@file, key:=@file.json).
+`--json '{...}'` supplies a base arguments object.
+
+Tokens live in $ATLASSIAN_MCP_HOME (default ~/.config/atlassian-mcp).
+"""
+import argparse, base64, hashlib, http.server, json, os, secrets, signal, sys, time
+import urllib.error, urllib.parse, urllib.request, webbrowser
+
+MCP_URL = os.environ.get("ATLASSIAN_MCP_URL", "https://mcp.atlassian.com/v2/mcp")
+HOME = os.environ.get("ATLASSIAN_MCP_HOME") or os.path.join(
+    os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "atlassian-mcp")
+CALLBACK_PORT = int(os.environ.get("ATLASSIAN_MCP_CALLBACK_PORT", "33418"))
+REDIRECT_URI = f"http://127.0.0.1:{CALLBACK_PORT}/callback"
+PROTOCOL_VERSION = "2025-06-18"
+DEFAULT_SCOPES = (
+    "offline_access read:me read:account email "
+    "read:jira:agent-interface write:jira:agent-interface search:jira:agent-interface "
+    "read:confluence:agent-interface write:confluence:agent-interface "
+    "search:confluence:agent-interface")
+
+
+def request(method, url, data=None, headers=None, form=False):
+    headers = dict(headers or {})
+    body = None
+    if data is not None:
+        if form:
+            body = urllib.parse.urlencode(data).encode()
+            headers["Content-Type"] = "application/x-www-form-urlencoded"
+        else:
+            body = json.dumps(data).encode()
+            headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(url, body, headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=120) as r:
+            return r.status, r.headers, r.read()
+    except urllib.error.HTTPError as e:
+        return e.code, e.headers, e.read()
+
+
+def get_json(url):
+    st, _, body = request("GET", url)
+    if st != 200:
+        sys.exit(f"GET {url} failed: HTTP {st}")
+    return json.loads(body)
+
+
+def load(name):
+    try:
+        with open(os.path.join(HOME, name)) as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return None
+
+
+def save(name, obj):
+    os.makedirs(HOME, mode=0o700, exist_ok=True)
+    path = os.path.join(HOME, name)
+    fd = os.open(path + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump(obj, f, indent=2)
+    os.replace(path + ".tmp", path)
+
+
+# ── OAuth ────────────────────────────────────────────────────────────────────
+
+def client():
+    """Auth server metadata + dynamically registered client, cached in client.json."""
+    c = load("client.json")
+    if c and c.get("mcp_url") == MCP_URL and c.get("redirect_uri") == REDIRECT_URI:
+        return c
+    u = urllib.parse.urlsplit(MCP_URL)
+    prm = get_json(f"{u.scheme}://{u.netloc}/.well-known/oauth-protected-resource{u.path}")
+    meta = get_json(prm["authorization_servers"][0].rstrip("/")
+                    + "/.well-known/oauth-authorization-server")
+    st, _, body = request("POST", meta["registration_endpoint"], {
+        "client_name": "atlassian-mcp CLI",
+        "redirect_uris": [REDIRECT_URI],
+        "grant_types": ["authorization_code", "refresh_token"],
+        "response_types": ["code"],
+        "token_endpoint_auth_method": "none",
+    })
+    if st not in (200, 201):
+        sys.exit(f"Client registration failed: HTTP {st}: {body.decode(errors='replace')}")
+    reg = json.loads(body)
+    c = {"mcp_url": MCP_URL, "redirect_uri": REDIRECT_URI, "metadata": meta,
+         "client_id": reg["client_id"], "client_secret": reg.get("client_secret")}
+    save("client.json", c)
+    return c
+
+
+def client_auth(c):
+    a = {"client_id": c["client_id"]}
+    if c.get("client_secret"):
+        a["client_secret"] = c["client_secret"]
+    return a
+
+
+def store_token(tok, previous=None):
+    if previous and "refresh_token" not in tok:
+        tok["refresh_token"] = previous.get("refresh_token")
+    tok["expires_at"] = time.time() + tok.get("expires_in", 3600)
+    save("token.json", tok)
+    return tok
+
+
+def login(scopes):
+    c = client()
+    verifier = secrets.token_urlsafe(64)
+    challenge = base64.urlsafe_b64encode(
+        hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+    state = secrets.token_urlsafe(16)
+    url = c["metadata"]["authorization_endpoint"] + "?" + urllib.parse.urlencode({
+        "response_type": "code", "client_id": c["client_id"],
+        "redirect_uri": REDIRECT_URI, "scope": scopes, "state": state,
+        "code_challenge": challenge, "code_challenge_method": "S256",
+        "resource": MCP_URL, "prompt": "consent",
+    })
+    result = {}
+
+    class Callback(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+            if urllib.parse.urlsplit(self.path).path != "/callback":
+                self.send_error(404)
+                return
+            result.update({k: v[0] for k, v in q.items()})
+            ok = "code" in result and result.get("state") == state
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(("Logged in, you can close this tab." if ok else
+                              f"Login failed: {result.get('error_description') or result.get('error') or 'state mismatch'}").encode())
+
+        def log_message(self, *a):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", CALLBACK_PORT), Callback)
+    server.timeout = 1
+    print(f"Opening browser for Atlassian login. If it does not open, visit:\n{url}",
+          file=sys.stderr)
+    webbrowser.open(url)
+    deadline = time.time() + 300
+    while not result and time.time() < deadline:
+        server.handle_request()
+    server.server_close()
+    if not result:
+        sys.exit("Timed out waiting for the browser login.")
+    if result.get("state") != state:
+        sys.exit("Login failed: OAuth state mismatch.")
+    if "code" not in result:
+        sys.exit(f"Login failed: {result.get('error')}: {result.get('error_description', '')}")
+    st, _, body = request("POST", c["metadata"]["token_endpoint"], {
+        "grant_type": "authorization_code", "code": result["code"],
+        "redirect_uri": REDIRECT_URI, "code_verifier": verifier,
+        "resource": MCP_URL, **client_auth(c)}, form=True)
+    if st != 200:
+        sys.exit(f"Token exchange failed: HTTP {st}: {body.decode(errors='replace')}")
+    tok = store_token(json.loads(body))
+    print(f"Logged in. Scopes: {tok.get('scope', scopes)}", file=sys.stderr)
+
+
+def access_token():
+    tok = load("token.json")
+    if not tok:
+        sys.exit("Not logged in. Run: atlassian-mcp login")
+    if tok["expires_at"] - 60 > time.time():
+        return tok["access_token"]
+    if not tok.get("refresh_token"):
+        sys.exit("Session expired. Run: atlassian-mcp login")
+    c = client()
+    st, _, body = request("POST", c["metadata"]["token_endpoint"], {
+        "grant_type": "refresh_token", "refresh_token": tok["refresh_token"],
+        "resource": MCP_URL, **client_auth(c)}, form=True)
+    if st != 200:
+        sys.exit(f"Token refresh failed (HTTP {st}). Run: atlassian-mcp login")
+    return store_token(json.loads(body), tok)["access_token"]
+
+
+# ── MCP (streamable HTTP) ────────────────────────────────────────────────────
+
+def messages(headers, body):
+    text = body.decode(errors="replace")
+    if "text/event-stream" not in (headers.get("Content-Type") or ""):
+        return [json.loads(text)] if text.strip() else []
+    out, data = [], []
+    for line in text.splitlines() + [""]:
+        if line.startswith("data:"):
+            data.append(line[5:].lstrip())
+        elif not line and data:
+            out.append(json.loads("\n".join(data)))
+            data = []
+    return out
+
+
+class Session:
+    def __init__(self):
+        self.token, self.sid, self.version, self.n = access_token(), None, None, 0
+        init = self.rpc("initialize", {"protocolVersion": PROTOCOL_VERSION, "capabilities": {},
+                                       "clientInfo": {"name": "atlassian-mcp-cli", "version": "1"}})
+        self.version = init.get("protocolVersion", PROTOCOL_VERSION)
+        self.post({"jsonrpc": "2.0", "method": "notifications/initialized"})
+
+    def post(self, msg):
+        h = {"Authorization": f"Bearer {self.token}",
+             "Accept": "application/json, text/event-stream"}
+        if self.sid:
+            h["Mcp-Session-Id"] = self.sid
+        if self.version:
+            h["MCP-Protocol-Version"] = self.version
+        st, headers, body = request("POST", MCP_URL, msg, h)
+        self.sid = headers.get("Mcp-Session-Id") or self.sid
+        if st == 401:
+            sys.exit("Unauthorized. Run: atlassian-mcp login")
+        if st >= 400:
+            sys.exit(f"MCP HTTP {st}: {body.decode(errors='replace')[:1000]}")
+        return messages(headers, body)
+
+    def rpc(self, method, params=None):
+        self.n += 1
+        for m in self.post({"jsonrpc": "2.0", "id": self.n, "method": method,
+                            "params": params or {}}):
+            if m.get("id") == self.n:
+                if "error" in m:
+                    sys.exit(f"MCP error: {json.dumps(m['error'])}")
+                return m["result"]
+        sys.exit(f"No response to {method}")
+
+    def tools(self, max_age=0):
+        """tools/list, cached in tools.json for max_age seconds."""
+        cache = load("tools.json")
+        if cache and time.time() - cache["at"] < max_age:
+            return cache["tools"]
+        out, cursor = [], None
+        while True:
+            r = self.rpc("tools/list", {"cursor": cursor} if cursor else {})
+            out += r.get("tools", [])
+            cursor = r.get("nextCursor")
+            if not cursor:
+                save("tools.json", {"at": time.time(), "tools": out})
+                return out
+
+    def cloud_id(self):
+        """$ATLASSIAN_CLOUD_ID, else the only site the user can access (cached)."""
+        if os.environ.get("ATLASSIAN_CLOUD_ID"):
+            return os.environ["ATLASSIAN_CLOUD_ID"]
+        site = load("site.json")
+        if not site:
+            r = self.rpc("tools/call", {"name": "getAccessibleAtlassianResources", "arguments": {}})
+            text = "".join(c.get("text", "") for c in r.get("content", []))
+            res = json.loads(text).get("data", {}).get("resources", [])
+            if len(res) != 1:
+                return None
+            site = {"cloudId": res[0]["cloudId"], "url": res[0]["url"]}
+            save("site.json", site)
+        return site["cloudId"]
+
+
+# ── commands ─────────────────────────────────────────────────────────────────
+
+def parse_args(pairs, base):
+    args = json.loads(base) if base else {}
+    for p in pairs:
+        key, sep, val = p.partition("=")
+        if not sep:
+            sys.exit(f"Bad argument {p!r}: use key=value or key:=json")
+        is_json = key.endswith(":")
+        if val.startswith("@"):
+            with open(val[1:]) as f:
+                val = f.read()
+        args[key.rstrip(":")] = json.loads(val) if is_json else val
+    return args
+
+
+def cmd_tools(a):
+    tools = Session().tools()
+    if a.name:
+        t = next((t for t in tools if t["name"] == a.name), None)
+        if not t:
+            sys.exit(f"No tool named {a.name}")
+        print(json.dumps(t, indent=2) if a.json else
+              f"{t['name']}\n\n{t.get('description', '').strip()}\n\nInput schema:\n"
+              + json.dumps(t.get("inputSchema", {}), indent=2))
+        return
+    if a.filter:
+        tools = [t for t in tools if a.filter.lower() in t["name"].lower()]
+    if a.json:
+        print(json.dumps(tools, indent=2))
+        return
+    for t in tools:
+        desc = (t.get("description") or "").strip().splitlines()
+        print(f"{t['name']:45} {desc[0][:100] if desc else ''}")
+
+
+def cmd_call(a):
+    s, args = Session(), parse_args(a.args, a.json)
+    if "cloudId" not in args:
+        tool = next((t for t in s.tools(max_age=86400) if t["name"] == a.tool), None)
+        if tool and "cloudId" in tool.get("inputSchema", {}).get("properties", {}):
+            cloud_id = s.cloud_id()
+            if cloud_id:
+                args["cloudId"] = cloud_id
+    r = s.rpc("tools/call", {"name": a.tool, "arguments": args})
+    if a.raw:
+        print(json.dumps(r, indent=2))
+    else:
+        for c in r.get("content", []):
+            print(c["text"] if c.get("type") == "text" else json.dumps(c, indent=2))
+        if "structuredContent" in r and not r.get("content"):
+            print(json.dumps(r["structuredContent"], indent=2))
+    sys.exit(1 if r.get("isError") else 0)
+
+
+def cmd_status(a):
+    tok = load("token.json")
+    if not tok:
+        sys.exit("Not logged in.")
+    left = int(tok["expires_at"] - time.time())
+    print(f"MCP server:    {MCP_URL}\nToken dir:     {HOME}\n"
+          f"Access token:  {'valid for %dm' % (left // 60) if left > 0 else 'expired'}\n"
+          f"Refresh token: {'yes' if tok.get('refresh_token') else 'no'}\n"
+          f"Scopes:        {tok.get('scope', '?')}")
+
+
+def cmd_logout(a):
+    tok, c = load("token.json"), load("client.json")
+    if tok and c and c["metadata"].get("revocation_endpoint") and tok.get("refresh_token"):
+        request("POST", c["metadata"]["revocation_endpoint"],
+                {"token": tok["refresh_token"], **client_auth(c)}, form=True)
+    for name in ("token.json", "site.json", "tools.json"):
+        try:
+            os.remove(os.path.join(HOME, name))
+        except FileNotFoundError:
+            pass
+    print("Logged out.", file=sys.stderr)
+
+
+def main():
+    signal.signal(signal.SIGPIPE, signal.SIG_DFL)  # quiet exit when piped into head
+    p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
+                                formatter_class=argparse.RawDescriptionHelpFormatter,
+                                epilog=__doc__.split("\n\n", 2)[2])
+    sub = p.add_subparsers(dest="cmd", required=True)
+    s = sub.add_parser("login", help="log in via browser (OAuth)")
+    s.add_argument("--scope", default=DEFAULT_SCOPES, help="space-separated OAuth scopes")
+    s.set_defaults(fn=lambda a: login(a.scope))
+    sub.add_parser("status", help="show login state").set_defaults(fn=cmd_status)
+    sub.add_parser("logout", help="revoke and forget the token").set_defaults(fn=cmd_logout)
+    s = sub.add_parser("tools", help="list tools, or show one tool's schema")
+    s.add_argument("name", nargs="?")
+    s.add_argument("-f", "--filter", help="substring filter on tool names")
+    s.add_argument("--json", action="store_true", help="full JSON output")
+    s.set_defaults(fn=cmd_tools)
+    s = sub.add_parser("call", help="call a tool")
+    s.add_argument("tool")
+    s.add_argument("args", nargs="*", help="key=value | key:=json | key=@file")
+    s.add_argument("--json", help="base arguments as a JSON object")
+    s.add_argument("--raw", action="store_true", help="print the full JSON-RPC result")
+    s.set_defaults(fn=cmd_call)
+    a = p.parse_args()
+    a.fn(a)
+
+
+if __name__ == "__main__":
+    main()
