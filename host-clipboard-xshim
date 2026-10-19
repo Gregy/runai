@@ -7,12 +7,17 @@
 # Only the write direction is supported. Read requests (`-o`, `--output`,
 # xclip's `-out`) fail loudly rather than silently returning nothing, because
 # the bridge deliberately refuses to hand the host clipboard to the container.
+#
+# As xclip, `-t/-target TYPE` and FILE arguments are passed on, so
+# `xclip -selection clipboard -t text/html table.html` copies HTML.
 set -eu
 
+prog=${0##*/}
+target=text/plain
 for arg in "$@"; do
     case "$arg" in
         -o|-o[a-z]*|--output*)
-            echo "${0##*/}: reading the host clipboard is not supported by the host bridge" >&2
+            echo "$prog: reading the host clipboard is not supported by the host bridge" >&2
             exit 1
             ;;
     esac
@@ -20,4 +25,29 @@ done
 
 # Resolve host-clipboard next to this script rather than trusting $PATH,
 # since we are usually invoked as the `xsel`/`xclip` symlink.
-exec "$(dirname "$0")/host-clipboard"
+helper="$(dirname "$0")/host-clipboard"
+
+if [ "$prog" != xclip ]; then
+    exec "$helper"
+fi
+
+# Rebuild "$@" as just the FILE arguments, remembering -target. xclip accepts
+# unambiguous prefixes of its long options; these are the ones taking a value.
+n=$#
+while [ "$n" -gt 0 ]; do
+    arg=$1
+    shift
+    n=$((n - 1))
+    case "$arg" in
+        -t|-ta*)
+            [ "$n" -gt 0 ] || { echo "$prog: $arg needs a value" >&2; exit 1; }
+            target=$1; shift; n=$((n - 1)) ;;
+        -se|-sel*|-d|-di*|-l|-lo*)
+            [ "$n" -gt 0 ] || { echo "$prog: $arg needs a value" >&2; exit 1; }
+            shift; n=$((n - 1)) ;;
+        -*) ;;
+        *) set -- "$@" "$arg" ;;
+    esac
+done
+
+exec "$helper" --type "$target" -- "$@"

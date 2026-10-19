@@ -1,20 +1,270 @@
-#!/bin/sh
-# In-container shim that copies stdin to the *host* clipboard via the host
-# bridge daemon, e.g.:
-#
-#   printf 'ABCD-1234' | host-clipboard
-#
-# Write-only by design: the bridge exposes no way to read the host clipboard
-# back, since it routinely holds passwords.
-set -eu
+#!/usr/bin/env python3
+"""In-container shim that copies stdin (or files) to the *host* clipboard via
+the host bridge daemon, e.g.:
 
-if [ -z "${HOST_BRIDGE_URL:-}" ] || [ -z "${HOST_BRIDGE_PASS:-}" ]; then
-    echo "host-clipboard: HOST_BRIDGE_URL / HOST_BRIDGE_PASS not set" >&2
-    exit 1
-fi
+  printf 'ABCD-1234' | host-clipboard              # plain text
+  host-clipboard --html table.html                 # HTML + plain-text alternative
+  host-clipboard --html --text table.txt < t.html  # HTML + your own plain text
+  host-clipboard --type text/html                  # same as --html
 
-exec curl -fsS \
-    -u "container:$HOST_BRIDGE_PASS" \
-    -H 'Content-Type: text/plain; charset=utf-8' \
-    --data-binary @- \
-    "${HOST_BRIDGE_URL}clipboard" >/dev/null
+HTML is offered together with a plain-text rendition (derived from the HTML
+unless --text is given), the way a browser or spreadsheet copy is: an email
+client pastes a real table, a terminal pastes readable text, not markup.
+
+Write-only by design: the bridge exposes no way to read the host clipboard
+back, since it routinely holds passwords.
+"""
+import argparse
+import base64
+import json
+import os
+import re
+import sys
+import urllib.error
+import urllib.request
+from html.parser import HTMLParser
+
+PROG = "host-clipboard"
+
+# Accepted --type values. The X selection target names are here because the
+# xclip shim passes `xclip -t` through verbatim.
+TYPE_ALIASES = {
+    "text/plain": "text/plain",
+    "text/plain;charset=utf-8": "text/plain",
+    "utf8_string": "text/plain",
+    "string": "text/plain",
+    "text": "text/plain",
+    "text/html": "text/html",
+    "text/html;charset=utf-8": "text/html",
+    "html": "text/html",
+}
+
+
+class HtmlToText(HTMLParser):
+    """Readable plain text from HTML: blocks on their own lines, list items
+    bulleted, and tables laid out in aligned columns."""
+
+    SKIP = {"script", "style", "head", "title", "template"}
+    BLOCK = {"address", "article", "aside", "blockquote", "dd", "div", "dl", "dt",
+             "figcaption", "figure", "footer", "form", "header", "hr", "main", "nav",
+             "section", "caption"}
+    PARAGRAPH = {"p", "h1", "h2", "h3", "h4", "h5", "h6", "pre", "table", "ul", "ol"}
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.lines = []
+        self.buf = []      # inline text of the current block
+        self.marker = ""   # list bullet (with indentation) for the next line
+        self.skip = 0
+        self.pre = 0
+        self.lists = []    # one entry per open list: None (ul) or next number (ol)
+        self.tables = []   # one entry per open table: {"rows": [...], "header": bool}
+        self.cell = None   # text pieces of the open td/th, if any
+
+    def text(self):
+        self.flush()
+        out = "\n".join(self.lines)
+        return re.sub(r"\n{3,}", "\n\n", out).strip("\n") + "\n"
+
+    # ── parser callbacks ─────────────────────────────────────────────
+    def handle_starttag(self, tag, attrs):
+        if tag in self.SKIP:
+            self.skip += 1
+        elif tag in ("td", "th") and self.tables:
+            if not self.tables[-1]["rows"]:
+                self.tables[-1]["rows"].append([])
+            if tag == "th" and len(self.tables[-1]["rows"]) == 1:
+                self.tables[-1]["header"] = True
+            self.cell = []
+        elif tag == "tr" and self.tables:
+            self.tables[-1]["rows"].append([])
+        elif tag == "table":
+            self.paragraph()
+            self.tables.append({"rows": [], "header": False, "outer_cell": self.cell})
+            self.cell = None
+        elif tag == "br":
+            self.write(" " if self.cell is not None else "\n")
+        elif tag == "li":
+            self.flush()
+            marker = "-"
+            if self.lists and self.lists[-1] is not None:
+                marker = f"{self.lists[-1]}."
+                self.lists[-1] += 1
+            self.marker = "  " * max(len(self.lists) - 1, 0) + marker + " "
+            if self.cell is not None:
+                self.cell.append(" ")
+        elif tag in ("ul", "ol"):
+            (self.flush if self.lists else self.paragraph)()
+            self.lists.append(None if tag == "ul" else 1)
+        elif tag == "img":
+            alt = dict(attrs).get("alt")
+            if alt:
+                self.write(alt)
+        elif tag in self.PARAGRAPH:
+            self.paragraph()
+            if tag == "pre":
+                self.pre += 1
+        elif tag in self.BLOCK:
+            self.flush()
+
+    def handle_endtag(self, tag):
+        if tag in self.SKIP:
+            self.skip = max(self.skip - 1, 0)
+        elif tag in ("td", "th") and self.cell is not None:
+            self.tables[-1]["rows"][-1].append(" ".join("".join(self.cell).split()))
+            self.cell = None
+        elif tag == "table" and self.tables:
+            self.flush()  # e.g. a <caption>
+            table = self.tables.pop()
+            lines = self.render_table(table)
+            self.cell = table["outer_cell"]
+            if self.cell is not None:  # nested table: flatten into the outer cell
+                self.cell.append(" " + " ".join(lines) + " ")
+            else:
+                self.lines.extend(lines)
+                self.paragraph()
+        elif tag in ("ul", "ol") and self.lists:
+            self.lists.pop()
+            (self.flush if self.lists else self.paragraph)()
+            self.marker = ""
+        elif tag == "pre" and self.pre:
+            self.flush()
+            self.pre -= 1
+            self.paragraph()
+        elif tag in self.PARAGRAPH:
+            self.paragraph()
+        elif tag == "li":
+            self.flush()
+            self.marker = ""
+        elif tag in self.BLOCK:
+            self.flush()
+
+    def handle_data(self, data):
+        if self.skip:
+            return
+        if not self.pre:
+            data = re.sub(r"\s+", " ", data)
+        self.write(data)
+
+    # ── helpers ──────────────────────────────────────────────────────
+    def write(self, text):
+        (self.cell if self.cell is not None else self.buf).append(text)
+
+    def flush(self):
+        """End the current line of inline text."""
+        if self.cell is not None:
+            self.cell.append(" ")
+            return
+        text = "".join(self.buf)
+        self.buf = []
+        if self.pre:
+            self.lines.extend(text.strip("\n").split("\n"))
+            return
+        for line in text.split("\n"):
+            line = re.sub(r" {2,}", " ", line).strip()
+            if line:
+                self.lines.append(self.marker + line)
+                self.marker = " " * len(self.marker)
+        if text.strip():
+            self.marker = ""
+
+    def paragraph(self):
+        """End the current block and leave a blank line after it."""
+        self.flush()
+        if self.cell is None and self.lines and self.lines[-1] != "":
+            self.lines.append("")
+
+    @staticmethod
+    def render_table(table):
+        rows = [r for r in table["rows"] if any(r)]
+        if not rows:
+            return []
+        width = max(len(r) for r in rows)
+        rows = [r + [""] * (width - len(r)) for r in rows]
+        widths = [max(len(r[i]) for r in rows) for i in range(width)]
+        lines = ["  ".join(c.ljust(w) for c, w in zip(r, widths)).rstrip() for r in rows]
+        if table["header"] and len(rows) > 1:
+            lines.insert(1, "  ".join("-" * w for w in widths))
+        return lines
+
+
+def html_to_text(html):
+    parser = HtmlToText()
+    parser.feed(html)
+    parser.close()
+    return parser.text()
+
+
+def read_input(files):
+    if not files:
+        return sys.stdin.buffer.read()
+    data = b""
+    for name in files:
+        try:
+            with open(name, "rb") as f:
+                data += f.read()
+        except OSError as e:
+            sys.exit(f"{PROG}: {e}")
+    return data
+
+
+def post(path, body, content_type):
+    url = os.environ.get("HOST_BRIDGE_URL")
+    password = os.environ.get("HOST_BRIDGE_PASS")
+    if not url or not password:
+        sys.exit(f"{PROG}: HOST_BRIDGE_URL / HOST_BRIDGE_PASS not set")
+    req = urllib.request.Request(url + path, data=body, method="POST", headers={
+        "Content-Type": content_type,
+        "Authorization": "Basic " + base64.b64encode(f"container:{password}".encode()).decode(),
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return resp.headers.get("X-Clipboard-Types", "")
+    except urllib.error.HTTPError as e:
+        if e.code == 404 and path != "clipboard":
+            sys.exit(f"{PROG}: the host bridge is too old for this; restart it (re-run run.sh)")
+        detail = e.read().decode("utf-8", errors="replace").strip()
+        sys.exit(f"{PROG}: host bridge refused the copy (HTTP {e.code}): {detail}")
+    except (urllib.error.URLError, OSError) as e:
+        sys.exit(f"{PROG}: cannot reach the host bridge at {url}: {e}")
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        prog=PROG, description="Copy stdin or FILEs to the host clipboard.")
+    ap.add_argument("files", nargs="*", metavar="FILE", help="read these instead of stdin")
+    ap.add_argument("--type", "-t", default="text/plain", metavar="MIME",
+                    help="format of the input: text/plain (default) or text/html")
+    ap.add_argument("--html", action="store_const", dest="type", const="text/html",
+                    help="the input is HTML (same as --type text/html)")
+    ap.add_argument("--text", metavar="FILE",
+                    help="with HTML: plain-text alternative to offer instead of one derived from the HTML")
+    args = ap.parse_args()
+
+    mime = TYPE_ALIASES.get(args.type.replace(" ", "").lower())
+    if mime is None:
+        sys.exit(f"{PROG}: unsupported type {args.type!r}; only text/plain and text/html")
+    if args.text and mime != "text/html":
+        sys.exit(f"{PROG}: --text only makes sense with --html")
+
+    data = read_input(args.files)
+    if mime == "text/plain":
+        post("clipboard", data, "text/plain; charset=utf-8")
+        return
+
+    html = data.decode("utf-8", errors="replace")
+    if args.text:
+        text = read_input([args.text]).decode("utf-8", errors="replace")
+    else:
+        text = html_to_text(html)
+    offered = post("clipboard/alternatives",
+                   json.dumps({"text/html": html, "text/plain": text}).encode(),
+                   "application/json")
+    if "text/plain" not in offered:
+        print(f"{PROG}: warning: the host could only offer {offered or 'text/html'}, so pasting "
+              "into a terminal or plain-text field gives raw HTML (install python3-gobject "
+              "and gtk4 on the host to offer plain text alongside)", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()

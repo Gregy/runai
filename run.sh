@@ -238,6 +238,16 @@ echo "🌐 Host bridge: listening on $HOST_BRIDGE_URL"
 if command -v wl-copy >/dev/null 2>&1 || command -v xclip >/dev/null 2>&1 \
         || command -v xsel >/dev/null 2>&1; then
     echo "📋 Host clipboard bridge: enabled (container writes only)"
+    # HTML copies also carry plain text only if host-bridge.py --hold-clipboard
+    # can run: an X display (XWayland is fine) and GTK 4 for Python.
+    GTK4_CHECK='import gi; gi.require_version("Gtk", "4.0"); from gi.repository import Gtk'
+    if [ -n "${DISPLAY:-}" ] && { python3 -c "$GTK4_CHECK" 2>/dev/null \
+            || /usr/bin/python3 -c "$GTK4_CHECK" 2>/dev/null; }; then
+        echo "📋 HTML copies: HTML + plain-text alternative (GTK 4)"
+    else
+        echo "⚠️  HTML copies will be HTML-only (pasting into a terminal gives raw markup)."
+        echo "⚠️  Install python3-gobject and gtk4 on the host (and have \$DISPLAY / XWayland) to add plain text."
+    fi
 else
     echo "⚠️  No wl-copy/xclip/xsel on the host — clipboard bridge will be unavailable."
     echo "⚠️  Install wl-clipboard (Wayland) or xclip/xsel (X11) to enable it."
