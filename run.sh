@@ -5,7 +5,10 @@ IMAGE_NAME="claude-code"
 CONTAINER_NAME="claude-code-$(date +%s)"
 
 # ── Parse flags ─────────────────────────────────────────────────
-# Usage: run.sh [--ssh] [--aws] [--docker] [--bluetooth] [--pi] [workspace] [-- agent args...]
+# Usage: run.sh [--ssh] [--aws] [--docker] [--bluetooth] [--pi] [--memory SIZE]
+#               [workspace] [-- agent args...]
+# --memory SIZE caps the container's RAM (docker size syntax, e.g. 8g; default
+# 4g, swap included); --memory unlimited removes the cap.
 # Unknown flags (starting with -) are forwarded to the agent (claude or pi).
 # Env: WORKSPACE=<dir> picks the workspace (default: cwd);
 #      ALLOW_UNSAFE_WORKSPACE_PATH=1 skips the workspace path collision check.
@@ -14,10 +17,13 @@ FORWARD_AWS=false
 FORWARD_DOCKER=false
 FORWARD_BLUETOOTH=false
 PI_MODE=false
+MEMORY_LIMIT="4g"
 CLAUDE_ARGS=()
 past_double_dash=false
 
-for arg in "$@"; do
+while [ $# -gt 0 ]; do
+    arg="$1"
+    shift
     if $past_double_dash; then
         CLAUDE_ARGS+=("$arg")
         continue
@@ -28,6 +34,15 @@ for arg in "$@"; do
         --docker) FORWARD_DOCKER=true ;;
         --bluetooth) FORWARD_BLUETOOTH=true ;;
         --pi)  PI_MODE=true ;;
+        --memory=*) MEMORY_LIMIT="${arg#--memory=}" ;;
+        --memory)
+            if [ $# -eq 0 ]; then
+                echo "❌ --memory requires a size (e.g. 8g) or 'unlimited'" >&2
+                exit 1
+            fi
+            MEMORY_LIMIT="$1"
+            shift
+            ;;
         --)   past_double_dash=true ;;
         -*)   CLAUDE_ARGS+=("$arg") ;;
         *)
@@ -113,6 +128,20 @@ if [ "${ALLOW_UNSAFE_WORKSPACE_PATH:-}" != "1" ]; then
     else
         echo "⚠️  Could not check $ABSOLUTE_WORKSPACE against the image; continuing." >&2
     fi
+fi
+
+# ── Memory limit ───────────────────────────────────────────────
+# --memory-swap equal to --memory means no swap on top of the RAM cap.
+MEMORY_DOCKER_ARGS=()
+if [ "$MEMORY_LIMIT" = "unlimited" ]; then
+    echo "🧠 Memory limit: none"
+else
+    if [ -z "$MEMORY_LIMIT" ]; then
+        echo "❌ --memory requires a size (e.g. 8g) or 'unlimited'" >&2
+        exit 1
+    fi
+    MEMORY_DOCKER_ARGS+=(--memory "$MEMORY_LIMIT" --memory-swap "$MEMORY_LIMIT")
+    echo "🧠 Memory limit: $MEMORY_LIMIT (no extra swap)"
 fi
 
 # ── AWS credentials forwarding ─────────────────────────────────
@@ -292,6 +321,7 @@ docker run -it --rm \
     "${AWS_DOCKER_ARGS[@]+"${AWS_DOCKER_ARGS[@]}"}" \
     "${DOCKER_DOCKER_ARGS[@]+"${DOCKER_DOCKER_ARGS[@]}"}" \
     "${BLUETOOTH_DOCKER_ARGS[@]+"${BLUETOOTH_DOCKER_ARGS[@]}"}" \
+    "${MEMORY_DOCKER_ARGS[@]+"${MEMORY_DOCKER_ARGS[@]}"}" \
     -v "$ABSOLUTE_WORKSPACE":"$ABSOLUTE_WORKSPACE" \
     -v "$CLAUDE_CONFIG_DIR":/home/coder/.claude \
     -v "$CLAUDE_CONFIG_JSON":/home/coder/.claude.json \
