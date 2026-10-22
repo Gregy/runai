@@ -4,6 +4,20 @@ Runs coding agents (Claude Code, pi) in a Docker container. `run.sh` builds the
 image from this checkout and starts it, with a host bridge so the container can
 open URLs in the host browser and write to the host clipboard.
 
+## pi providers
+
+`run.sh --pi` starts pi with the default model saved in its settings
+(`~/.pi-docker/agent/settings.json`, mounted as `~/.pi`); choose another with
+`/model` and press `Ctrl+S` to make it the default. Credentials, extensions
+and settings all live in `~/.pi-docker`, so they persist across runs.
+
+- **AWS Bedrock** needs `--aws` to forward the host's AWS credentials.
+- **Cursor subscription**: install the community
+  [pi-cursor](https://github.com/Rahularya01/pi-cursor) extension once with
+  `pi install npm:@rahularya01/pi-cursor@<version>` (review the release
+  first; it uses Cursor's unofficial protocol), then `/login cursor` inside
+  pi. No `--aws` needed.
+
 ## Site-specific details are kept out of git
 
 This repository is public. Anything specific to the site it is used at —

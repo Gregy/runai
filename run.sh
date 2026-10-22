@@ -10,6 +10,10 @@ CONTAINER_NAME="claude-code-$(date +%s)"
 # --memory SIZE caps the container's RAM (docker size syntax, e.g. 8g; default
 # 4g, swap included); --memory unlimited removes the cap.
 # Unknown flags (starting with -) are forwarded to the agent (claude or pi).
+# --pi starts pi with the default model from its settings (~/.pi-docker); pick
+# another with /model inside pi (Ctrl+S saves it as the default), or pass e.g.
+# `--pi -- --model cursor/composer-2`.
+# Bedrock models additionally need --aws.
 # Env: WORKSPACE=<dir> picks the workspace (default: cwd);
 #      ALLOW_UNSAFE_WORKSPACE_PATH=1 skips the workspace path collision check.
 FORWARD_SSH=false
@@ -50,12 +54,6 @@ while [ $# -gt 0 ]; do
             ;;
     esac
 done
-
-# pi uses AWS Bedrock as its backend, so AWS credentials must be forwarded.
-if [ "$PI_MODE" = true ] && [ "$FORWARD_AWS" != true ]; then
-    echo "❌ --pi requires --aws (pi uses AWS Bedrock as its backend)" >&2
-    exit 1
-fi
 
 WORKSPACE="${WORKSPACE:-.}"  # Default to current directory
 
@@ -292,8 +290,13 @@ cleanup() {
 trap cleanup EXIT
 
 if [ "$PI_MODE" = true ]; then
-    echo "🥧 Starting pi (Bedrock backend, Claude Opus 4.7)..."
-    AGENT_CMD=(pi --provider amazon-bedrock --model eu.anthropic.claude-opus-4-7)
+    # No --provider/--model: pi uses the default from its settings.json, which
+    # Ctrl+S in the /model picker saves (Cursor, Bedrock, ...).
+    echo "🥧 Starting pi (default model from ${PI_CONFIG_DIR}/agent/settings.json)..."
+    if [ "$FORWARD_AWS" != true ]; then
+        echo "   Bedrock models need --aws; Cursor models need /login cursor once."
+    fi
+    AGENT_CMD=(pi)
 else
     echo "🚀 Starting Claude Code..."
     AGENT_CMD=(claude --allowedTools "Bash,Edit,Read,Write,Glob,Grep,NotebookEdit,Agent,WebFetch,WebSearch,AskUserQuestion,CronCreate,CronDelete,CronList,EnterPlanMode,ExitPlanMode,EnterWorktree,ExitWorktree,Monitor,PushNotification,RemoteTrigger,ScheduleWakeup,Skill,TaskCreate,TaskGet,TaskList,TaskOutput,TaskStop,TaskUpdate,ToolSearch")
