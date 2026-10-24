@@ -5,8 +5,8 @@ IMAGE_NAME="claude-code"
 CONTAINER_NAME="claude-code-$(date +%s)"
 
 # ── Parse flags ─────────────────────────────────────────────────
-# Usage: run.sh [--ssh] [--aws] [--docker] [--bluetooth] [--pi] [--memory SIZE]
-#               [workspace] [-- agent args...]
+# Usage: run.sh [--ssh] [--aws] [--bedrock] [--docker] [--bluetooth] [--pi]
+#               [--memory SIZE] [workspace] [-- agent args...]
 # --memory SIZE caps the container's RAM (docker size syntax, e.g. 8g; default
 # 4g, swap included); --memory unlimited removes the cap.
 # Unknown flags (starting with -) are forwarded to the agent (claude or pi).
@@ -14,10 +14,14 @@ CONTAINER_NAME="claude-code-$(date +%s)"
 # another with /model inside pi (Ctrl+S saves it as the default), or pass e.g.
 # `--pi -- --model cursor/composer-2`.
 # Bedrock models additionally need --aws.
+# --bedrock forces Claude Code onto AWS Bedrock instead of the Anthropic login
+# (requires --aws). Region, models etc. come from the untracked bedrock.env next
+# to this script (see bedrock.env.example).
 # Env: WORKSPACE=<dir> picks the workspace (default: cwd);
 #      ALLOW_UNSAFE_WORKSPACE_PATH=1 skips the workspace path collision check.
 FORWARD_SSH=false
 FORWARD_AWS=false
+USE_BEDROCK=false
 FORWARD_DOCKER=false
 FORWARD_BLUETOOTH=false
 PI_MODE=false
@@ -35,6 +39,7 @@ while [ $# -gt 0 ]; do
     case "$arg" in
         --ssh) FORWARD_SSH=true ;;
         --aws) FORWARD_AWS=true ;;
+        --bedrock) USE_BEDROCK=true ;;
         --docker) FORWARD_DOCKER=true ;;
         --bluetooth) FORWARD_BLUETOOTH=true ;;
         --pi)  PI_MODE=true ;;
@@ -54,6 +59,15 @@ while [ $# -gt 0 ]; do
             ;;
     esac
 done
+
+if [ "$USE_BEDROCK" = true ] && [ "$PI_MODE" = true ]; then
+    echo "❌ --bedrock is for Claude Code; for pi pass --aws and pick a Bedrock model with /model" >&2
+    exit 1
+fi
+if [ "$USE_BEDROCK" = true ] && [ "$FORWARD_AWS" != true ]; then
+    echo "❌ --bedrock requires --aws to forward the AWS credentials" >&2
+    exit 1
+fi
 
 WORKSPACE="${WORKSPACE:-.}"  # Default to current directory
 
@@ -160,6 +174,21 @@ if [ "$FORWARD_AWS" = true ]; then
             AWS_DOCKER_ARGS+=(-e "$var=${!var}")
         fi
     done
+fi
+
+# ── Bedrock (Claude Code) ──────────────────────────────────────
+# The Bedrock settings (region, profile, models) live in the untracked
+# bedrock.env, passed as a docker env-file. Variables forwarded by --aws above
+# take precedence over it (docker applies -e after --env-file).
+BEDROCK_DOCKER_ARGS=()
+if [ "$USE_BEDROCK" = true ]; then
+    BEDROCK_ENV_FILE="$SCRIPT_DIR/bedrock.env"
+    if [ ! -f "$BEDROCK_ENV_FILE" ]; then
+        echo "❌ --bedrock needs $BEDROCK_ENV_FILE (copy bedrock.env.example and edit it)" >&2
+        exit 1
+    fi
+    BEDROCK_DOCKER_ARGS+=(-e CLAUDE_CODE_USE_BEDROCK=1 --env-file "$BEDROCK_ENV_FILE")
+    echo "🪨 Claude Code on Bedrock: enabled (settings from $BEDROCK_ENV_FILE)"
 fi
 
 # ── Git configuration (always forwarded) ───────────────────────
@@ -302,8 +331,12 @@ else
     AGENT_CMD=(claude --allowedTools "Bash,Edit,Read,Write,Glob,Grep,NotebookEdit,Agent,WebFetch,WebSearch,AskUserQuestion,CronCreate,CronDelete,CronList,EnterPlanMode,ExitPlanMode,EnterWorktree,ExitWorktree,Monitor,PushNotification,RemoteTrigger,ScheduleWakeup,Skill,TaskCreate,TaskGet,TaskList,TaskOutput,TaskStop,TaskUpdate,ToolSearch")
 fi
 echo ""
-echo "   On first run you'll be prompted to authenticate via browser."
-echo "   Credentials are persisted so you won't need to log in again."
+if [ "$USE_BEDROCK" = true ]; then
+    echo "   Using the forwarded AWS credentials (run aws sso login on the host first if needed)."
+else
+    echo "   On first run you'll be prompted to authenticate via browser."
+    echo "   Credentials are persisted so you won't need to log in again."
+fi
 echo ""
 
 # --security-opt label=disable: disables SELinux confinement for this container
@@ -322,6 +355,7 @@ docker run -it --rm \
     "${GIT_DOCKER_ARGS[@]+"${GIT_DOCKER_ARGS[@]}"}" \
     "${SSH_DOCKER_ARGS[@]+"${SSH_DOCKER_ARGS[@]}"}" \
     "${AWS_DOCKER_ARGS[@]+"${AWS_DOCKER_ARGS[@]}"}" \
+    "${BEDROCK_DOCKER_ARGS[@]+"${BEDROCK_DOCKER_ARGS[@]}"}" \
     "${DOCKER_DOCKER_ARGS[@]+"${DOCKER_DOCKER_ARGS[@]}"}" \
     "${BLUETOOTH_DOCKER_ARGS[@]+"${BLUETOOTH_DOCKER_ARGS[@]}"}" \
     "${MEMORY_DOCKER_ARGS[@]+"${MEMORY_DOCKER_ARGS[@]}"}" \
