@@ -34,6 +34,22 @@ and settings all live in `~/.pi-docker`, so they persist across runs.
   first; it uses Cursor's unofficial protocol), then `/login cursor` inside
   pi. No `--aws` needed.
 
+## Skills
+
+`skills/` holds the agent skills the image ships. The Dockerfile copies them,
+with `.claude-plugin/plugin.json`, to `/opt/runai` in the image, and both
+agents read them from there in place; nothing is copied into `~/.claude` or
+`~/.pi`:
+
+- Claude Code is started with `--plugin-dir /opt/runai`, so the repo is loaded
+  as the `runai` plugin and its skills are named `runai:<skill>`.
+- pi is started with `--skill /opt/runai/skills`.
+
+A skill change takes effect on the next `run.sh` (which rebuilds the image).
+Skills of your own still go in `~/.claude-code-docker/skills` (Claude Code) or
+`~/.pi-docker/agent/skills` (pi); avoid reusing a name from `skills/` there, as
+pi lets the one in its own directory win.
+
 ## Site-specific details are kept out of git
 
 This repository is public. Anything specific to the site it is used at —

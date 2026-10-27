@@ -325,10 +325,12 @@ if [ "$PI_MODE" = true ]; then
     if [ "$FORWARD_AWS" != true ]; then
         echo "   Bedrock models need --aws; Cursor models need /login cursor once."
     fi
-    AGENT_CMD=(pi)
+    # Skills shipped with the image are read in place (see Dockerfile)
+    AGENT_CMD=(pi --skill /opt/runai/skills)
 else
     echo "🚀 Starting Claude Code..."
-    AGENT_CMD=(claude --allowedTools "Bash,Edit,Read,Write,Glob,Grep,NotebookEdit,Agent,WebFetch,WebSearch,AskUserQuestion,CronCreate,CronDelete,CronList,EnterPlanMode,ExitPlanMode,EnterWorktree,ExitWorktree,Monitor,PushNotification,RemoteTrigger,ScheduleWakeup,Skill,TaskCreate,TaskGet,TaskList,TaskOutput,TaskStop,TaskUpdate,ToolSearch")
+    # --plugin-dir: the skills shipped with the image, read in place (see Dockerfile)
+    AGENT_CMD=(claude --plugin-dir /opt/runai --allowedTools "Bash,Edit,Read,Write,Glob,Grep,NotebookEdit,Agent,WebFetch,WebSearch,AskUserQuestion,CronCreate,CronDelete,CronList,EnterPlanMode,ExitPlanMode,EnterWorktree,ExitWorktree,Monitor,PushNotification,RemoteTrigger,ScheduleWakeup,Skill,TaskCreate,TaskGet,TaskList,TaskOutput,TaskStop,TaskUpdate,ToolSearch")
 fi
 echo ""
 if [ "$USE_BEDROCK" = true ]; then

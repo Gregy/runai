@@ -1,0 +1,5 @@
+{
+  "name": "runai",
+  "description": "Skills shipped with the runai container image",
+  "version": "1.0.0"
+}

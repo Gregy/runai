@@ -139,9 +139,11 @@ RUN if [ -n "$GLAB_HOST" ] && [ -n "$GLAB_CLIENT_ID" ]; then \
 
 COPY entrypoint.sh /entrypoint.sh
 COPY CLAUDE.md /home/coder/CLAUDE.md
-# Claude Code skills; ~/.claude is a host mount, so entrypoint.sh syncs these
-# into ~/.claude/skills on every start.
-COPY skills /opt/claude-skills
+# Agent skills, read in place by both agents: run.sh starts Claude Code with
+# --plugin-dir /opt/runai (a plugin, so its skills are runai:<name>) and pi with
+# --skill /opt/runai/skills.
+COPY .claude-plugin /opt/runai/.claude-plugin
+COPY skills /opt/runai/skills
 COPY host-browser host-clipboard host-clipboard-xshim gh-login \
      gitlab-mr-draft-note.py mcp-cli /usr/local/bin/
 RUN chmod +x /entrypoint.sh \
