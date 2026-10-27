@@ -38,6 +38,8 @@ SERVICES = {
             "read:confluence:agent-interface write:confluence:agent-interface "
             "search:confluence:agent-interface"),
         "cloud_id": True,  # fill in Atlassian's cloudId tool argument
+        # who the token belongs to: (tool, arguments, accountId-only fallback tool)
+        "whoami": ("executeRead", {"name": "getJiraCurrentUser", "inputs": {}}, "atlassianUserInfo"),
     },
 }
 NAME = os.path.basename(sys.argv[0])
@@ -206,6 +208,8 @@ def login(scopes):
         sys.exit(f"Token exchange failed: HTTP {st}: {body.decode(errors='replace')}")
     tok = store_token(json.loads(body))
     print(f"Logged in. Scopes: {tok.get('scope', scopes or 'server default')}", file=sys.stderr)
+    if SERVICE.get("whoami"):
+        print(f"Account: {whoami(Session())}", file=sys.stderr)
 
 
 def access_token():
@@ -288,6 +292,16 @@ class Session:
                 save("tools.json", {"at": time.time(), "tools": out})
                 return out
 
+    def call(self, tool, args):
+        """tools/call, filling in Atlassian's cloudId when the tool takes one."""
+        if SERVICE.get("cloud_id") and "cloudId" not in args:
+            t = next((t for t in self.tools(max_age=86400) if t["name"] == tool), None)
+            if t and "cloudId" in t.get("inputSchema", {}).get("properties", {}):
+                cloud_id = self.cloud_id()
+                if cloud_id:
+                    args = {**args, "cloudId": cloud_id}
+        return self.rpc("tools/call", {"name": tool, "arguments": args})
+
     def cloud_id(self):
         """$ATLASSIAN_CLOUD_ID, else the only site the user can access (cached)."""
         if os.environ.get("ATLASSIAN_CLOUD_ID"):
@@ -340,15 +354,25 @@ def cmd_tools(a):
         print(f"{t['name']:45} {desc[0][:100] if desc else ''}")
 
 
+def whoami(s):
+    """'Name <email> (accountId)' of the logged-in account, from SERVICE['whoami']."""
+    tool, args, fallback = SERVICE["whoami"]
+    for t, a in ((tool, args), (fallback, {})):
+        r = s.call(t, a)
+        try:
+            d = json.loads("".join(c.get("text", "") for c in r.get("content", [])))["data"]
+        except (ValueError, KeyError, TypeError):
+            continue
+        if not r.get("isError") and d.get("accountId"):
+            name = " ".join(filter(None, [d.get("displayName"),
+                                          d.get("emailAddress") and f"<{d['emailAddress']}>"]))
+            return f"{name} ({d['accountId']})" if name else d["accountId"]
+    return "unknown"
+
+
 def cmd_call(a):
     s, args = Session(), parse_args(a.args, a.json)
-    if SERVICE.get("cloud_id") and "cloudId" not in args:
-        tool = next((t for t in s.tools(max_age=86400) if t["name"] == a.tool), None)
-        if tool and "cloudId" in tool.get("inputSchema", {}).get("properties", {}):
-            cloud_id = s.cloud_id()
-            if cloud_id:
-                args["cloudId"] = cloud_id
-    r = s.rpc("tools/call", {"name": a.tool, "arguments": args})
+    r = s.call(a.tool, args)
     if a.raw:
         print(json.dumps(r, indent=2))
     else:
@@ -368,6 +392,8 @@ def cmd_status(a):
           f"Access token:  {'valid for %dm' % (left // 60) if left > 0 else 'expired'}\n"
           f"Refresh token: {'yes' if tok.get('refresh_token') else 'no'}\n"
           f"Scopes:        {tok.get('scope', '?')}")
+    if SERVICE.get("whoami"):
+        print(f"Account:       {whoami(Session())}")
 
 
 def cmd_logout(a):
@@ -394,7 +420,7 @@ def main():
     s = sub.add_parser("login", help="log in via browser (OAuth)")
     s.add_argument("--scope", default=DEFAULT_SCOPES, help="space-separated OAuth scopes")
     s.set_defaults(fn=lambda a: login(a.scope))
-    sub.add_parser("status", help="show login state").set_defaults(fn=cmd_status)
+    sub.add_parser("status", help="show login state and the logged-in account").set_defaults(fn=cmd_status)
     sub.add_parser("logout", help="revoke and forget the token").set_defaults(fn=cmd_logout)
     s = sub.add_parser("tools", help="list tools, or show one tool's schema")
     s.add_argument("name", nargs="?")
