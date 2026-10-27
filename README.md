@@ -56,15 +56,28 @@ This repository is public. Anything specific to the site it is used at —
 internal hostnames, OAuth client IDs, Jira project and field IDs — lives only
 in the local checkout and must never be committed:
 
-- **`local.env`** (gitignored): build settings that `run.sh` sources and
-  passes to `docker build`:
+- **`local.env`** (gitignored): sourced by `run.sh`. `GLAB_*` are passed to
+  `docker build`; `GEMINI_ENTERPRISE_*` are passed to the container at runtime
+  (`docker run -e`) for the `gemini-enterprise` CLI and its skill:
 
   ```sh
   GLAB_HOST=gitlab.example.com      # self-hosted GitLab for glab
   GLAB_CLIENT_ID=<OAuth application client_id on that GitLab>
+
+  # Google OAuth client allowing the cloud-platform scope and the
+  # https://codeassist.google.com/authcode redirect
+  GEMINI_ENTERPRISE_OAUTH_CLIENT_ID=<...>.apps.googleusercontent.com
+  GEMINI_ENTERPRISE_OAUTH_CLIENT_SECRET=<...>
+  # Gemini Enterprise (Agentspace) instance
+  GEMINI_ENTERPRISE_PROJECT=<GCP project ID>
+  GEMINI_ENTERPRISE_PROJECT_NUMBER=<GCP project number>
+  GEMINI_ENTERPRISE_ENGINE_ID=<engine ID>
+  GEMINI_ENTERPRISE_CONFIG_ID=<widget config ID, the cid in the web app URL>
+  #GEMINI_ENTERPRISE_LOCATION=us
   ```
 
-  Without it the image builds fine, just without glab pre-configured.
+  Without it the image builds fine, just without glab pre-configured, and
+  `gemini-enterprise` reports which settings are missing.
 
 - **`bedrock.env`** (gitignored): the Bedrock settings for `--bedrock` (AWS
   profile, region, model IDs); see `bedrock.env.example`.

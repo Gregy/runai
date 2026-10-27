@@ -83,14 +83,19 @@ if [ ! -f "$SCRIPT_DIR/tsh-linux-amd64" ]; then
     exit 1
 fi
 
-# Site-specific build settings (e.g. GLAB_HOST, GLAB_CLIENT_ID) live in the
-# untracked local.env next to this script; see README.
+# Site-specific settings live in the untracked local.env next to this script;
+# see README. GLAB_* are build settings; GEMINI_ENTERPRISE_* are passed to the
+# container at runtime (for the gemini-enterprise CLI).
 GLAB_HOST=""
 GLAB_CLIENT_ID=""
 if [ -f "$SCRIPT_DIR/local.env" ]; then
     # shellcheck source=/dev/null
     . "$SCRIPT_DIR/local.env"
 fi
+SITE_DOCKER_ARGS=()
+for var in $(compgen -v GEMINI_ENTERPRISE_); do
+    SITE_DOCKER_ARGS+=(-e "$var=${!var}")
+done
 
 echo "🔨 Building Claude Code Docker image..."
 docker build -t "$IMAGE_NAME" -f "$SCRIPT_DIR/Dockerfile" \
@@ -361,6 +366,7 @@ docker run -it --rm \
     "${DOCKER_DOCKER_ARGS[@]+"${DOCKER_DOCKER_ARGS[@]}"}" \
     "${BLUETOOTH_DOCKER_ARGS[@]+"${BLUETOOTH_DOCKER_ARGS[@]}"}" \
     "${MEMORY_DOCKER_ARGS[@]+"${MEMORY_DOCKER_ARGS[@]}"}" \
+    "${SITE_DOCKER_ARGS[@]+"${SITE_DOCKER_ARGS[@]}"}" \
     -v "$ABSOLUTE_WORKSPACE":"$ABSOLUTE_WORKSPACE" \
     -v "$CLAUDE_CONFIG_DIR":/home/coder/.claude \
     -v "$CLAUDE_CONFIG_JSON":/home/coder/.claude.json \

@@ -145,7 +145,7 @@ COPY CLAUDE.md /home/coder/CLAUDE.md
 COPY .claude-plugin /opt/runai/.claude-plugin
 COPY skills /opt/runai/skills
 COPY host-browser host-clipboard host-clipboard-xshim gh-login \
-     gitlab-mr-draft-note.py mcp-cli /usr/local/bin/
+     gitlab-mr-draft-note.py mcp-cli gemini-enterprise.mjs /usr/local/bin/
 RUN chmod +x /entrypoint.sh \
         /usr/local/bin/host-browser \
         /usr/local/bin/host-clipboard \
@@ -153,7 +153,9 @@ RUN chmod +x /entrypoint.sh \
         /usr/local/bin/gh-login \
         /usr/local/bin/gitlab-mr-draft-note.py \
         /usr/local/bin/mcp-cli \
+        /usr/local/bin/gemini-enterprise.mjs \
     && ln -s /usr/local/bin/mcp-cli /usr/local/bin/atlassian-mcp \
+    && ln -s /usr/local/bin/gemini-enterprise.mjs /usr/local/bin/gemini-enterprise \
     && ln -s /usr/local/bin/host-browser /usr/local/bin/xdg-open \
     && ln -s /usr/local/bin/host-clipboard-xshim /usr/local/bin/xsel \
     && ln -s /usr/local/bin/host-clipboard-xshim /usr/local/bin/xclip \
