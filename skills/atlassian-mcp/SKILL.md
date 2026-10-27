@@ -18,6 +18,12 @@ atlassian-mcp login         # opens the operator's browser, waits up to 5 min
 
 - Run `login` with `run_in_background: true` and tell the operator to approve
   the Atlassian consent page in their browser; you are notified when it exits.
+- **Check the identity.** `login` and `status` print `Account: Name <email>
+  (accountId)`. Tell the operator which account you got. People can have
+  more than one Atlassian account (e.g. a legacy one with the same name), and
+  reads work with either. If it is the wrong one: `atlassian-mcp logout`, then
+  log in again and pick the other account in the browser. Don't decide this by
+  email alone: the right one may not be the email you know for the operator.
 - Tokens live in `~/.config/atlassian-mcp/` and are **not persisted** across
   container restarts, so expect to log in once per container.
 - Access tokens refresh automatically. `Unauthorized` or `Token refresh failed`
@@ -147,15 +153,17 @@ atlassian-mcp call searchJiraIssuesUsingJql jql="project = PROJ AND assignee = c
   | jq '.data.issues[] | {key, summary: .fields.summary, status: .fields.status.name}'
 # page with nextPageToken= until .data.isLast is true
 
-# one issue (view=evidence adds custom fields + links; descriptions come back as markdown)
-atlassian-mcp call getJiraIssue issueIdOrKey=PROJ-123 view=evidence
+# one issue (descriptions come back as markdown)
+atlassian-mcp call getJiraIssue issueIdOrKey=PROJ-123 view=full
 
 # create; extra or custom fields go in additional_fields, e.g. a cascading select:
 atlassian-mcp call createJiraIssue projectKey=PROJ issueType=Task summary='...' description=@desc.md \
   additional_fields:='{"customfield_10000": {"value": "Parent", "child": {"value": "Child"}}}'
+# parent epic: parent=PROJ-100; fix version: add "fixVersions": [{"id": "10001"}] to additional_fields
 
 # edit fields (multi-value fields are replaced, not appended)
 atlassian-mcp call editJiraIssue issueIdOrKey=PROJ-123 fields:='{"summary":"New title"}'
+# e.g. fields:='{"parent":{"key":"PROJ-100"}}'  fields:='{"fixVersions":[{"id":"10001"}]}'
 
 # transition: list transitions first, then use the transition's id (its name is not the target status)
 atlassian-mcp call executeRead name=listJiraIssueTransitions inputs:='{"issueIdOrKey":"PROJ-123"}' | jq '.data.transitions[] | {id, name}'
@@ -164,6 +172,34 @@ atlassian-mcp call transitionJiraIssue issueIdOrKey=PROJ-123 transitionId=91
 # comment (markdown); comments are listed via executeRead name=listJiraIssueComments
 atlassian-mcp call addOrEditJiraIssueComment issueIdOrKey=PROJ-123 commentBody=@comment.md
 ```
+
+**Views.** `getJiraIssue` and `searchJiraIssuesUsingJql` take `view=`:
+`compact` (default: summary, status, assignee, priority, updated), `evidence`
+(+ issuetype, reporter, labels, links, `customFields` by name), `full` (+
+`fixVersions`, `components`, `parent`, project, created). Use `view=full`
+whenever metadata matters. Don't use `fields:=[...]` for standard fields:
+`fixVersions`, `components` and `labels` are silently dropped from the output.
+
+**Create errors:** an empty `Available custom fields: .` list, or a 403 "no
+permission to create issues", means the account can't create there (wrong
+account, see Login), not a wrong field shape. Confirm with `executeRead
+name=listJiraProjectIssueTypesMetadata inputs:='{"projectIdOrKey":"PROJ"}'`
+(empty = no create permission) and ask the operator.
+
+**"Like other tickets"** means copying all their metadata, not just the
+visible convention:
+1. Fetch the references with `view=full` (`jql='key in (A-1, A-2)' view=full`).
+2. Note what they share: summary pattern, issue type, `fixVersions`,
+   `components`, `labels`, parent, priority, custom fields.
+3. Set all of it on create, except fields Jira Automation fills.
+4. Re-fetch the new issue (after ~10 s, automation may still be filling
+   fields) and diff it against a reference; rank and colour always differ:
+   ```bash
+   f='.data.fields | {issuetype: .issuetype.name, fixVersions: [.fixVersions[].name], components: [.components[].name],
+      labels, priority: .priority.name, parent: .parent.key, custom: (.customFields | map_values(.value))}'
+   diff <(atlassian-mcp call getJiraIssue issueIdOrKey=REF-1 view=full | jq -S "$f") \
+        <(atlassian-mcp call getJiraIssue issueIdOrKey=NEW-1 view=full | jq -S "$f")
+   ```
 
 User fields (assignee etc.) take account IDs: resolve names with
 `executeRead name=lookupJiraAccountId` or `listJiraIssueAssignableUsers`
