@@ -143,14 +143,15 @@ COPY CLAUDE.md /home/coder/CLAUDE.md
 # into ~/.claude/skills on every start.
 COPY skills /opt/claude-skills
 COPY host-browser host-clipboard host-clipboard-xshim gh-login \
-     gitlab-mr-draft-note.py atlassian-mcp /usr/local/bin/
+     gitlab-mr-draft-note.py mcp-cli /usr/local/bin/
 RUN chmod +x /entrypoint.sh \
         /usr/local/bin/host-browser \
         /usr/local/bin/host-clipboard \
         /usr/local/bin/host-clipboard-xshim \
         /usr/local/bin/gh-login \
         /usr/local/bin/gitlab-mr-draft-note.py \
-        /usr/local/bin/atlassian-mcp \
+        /usr/local/bin/mcp-cli \
+    && ln -s /usr/local/bin/mcp-cli /usr/local/bin/atlassian-mcp \
     && ln -s /usr/local/bin/host-browser /usr/local/bin/xdg-open \
     && ln -s /usr/local/bin/host-clipboard-xshim /usr/local/bin/xsel \
     && ln -s /usr/local/bin/host-clipboard-xshim /usr/local/bin/xclip \

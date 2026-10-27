@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""CLI over the official Atlassian Rovo MCP server (Jira, Confluence, ...).
+"""CLI over remote MCP servers with browser (OAuth) login.
 
-Why this exists: the MCP server is the only Atlassian API surface that offers
-browser (OAuth) login *and* full Confluence read/write/search. This script
-does the MCP OAuth dance itself (dynamic client registration + PKCE, callback
-on 127.0.0.1) and exposes the server's tools on the command line.
+Why this exists: some services (e.g. Atlassian Jira/Confluence) offer browser
+login *and* full API coverage only through their MCP server. This script does
+the MCP OAuth dance itself (dynamic client registration + PKCE, callback on
+127.0.0.1) and exposes the server's tools on the command line. It is installed
+under one name per service (see SERVICES); the name it is called by picks the
+service.
 
 Usage:
   atlassian-mcp login                      # opens the browser
@@ -18,22 +20,39 @@ Arguments for `call`: key=value (string), key:=value (JSON), and a value
 starting with @ is read from that file (key=@file, key:=@file.json).
 `--json '{...}'` supplies a base arguments object.
 
-Tokens live in $ATLASSIAN_MCP_HOME (default ~/.config/atlassian-mcp).
+Per-service environment, e.g. for atlassian-mcp: $ATLASSIAN_MCP_URL (server),
+$ATLASSIAN_MCP_HOME (token dir, default ~/.config/atlassian-mcp),
+$ATLASSIAN_MCP_CALLBACK_PORT.
 """
 import argparse, base64, hashlib, http.server, json, os, secrets, signal, sys, time
 import urllib.error, urllib.parse, urllib.request, webbrowser
 
-MCP_URL = os.environ.get("ATLASSIAN_MCP_URL", "https://mcp.atlassian.com/v2/mcp")
-HOME = os.environ.get("ATLASSIAN_MCP_HOME") or os.path.join(
-    os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "atlassian-mcp")
-CALLBACK_PORT = int(os.environ.get("ATLASSIAN_MCP_CALLBACK_PORT", "33418"))
+SERVICES = {
+    "atlassian-mcp": {
+        "label": "Atlassian",
+        "url": "https://mcp.atlassian.com/v2/mcp",
+        "port": 33418,
+        "scopes": (
+            "offline_access read:me read:account email "
+            "read:jira:agent-interface write:jira:agent-interface search:jira:agent-interface "
+            "read:confluence:agent-interface write:confluence:agent-interface "
+            "search:confluence:agent-interface"),
+        "cloud_id": True,  # fill in Atlassian's cloudId tool argument
+    },
+}
+NAME = os.path.basename(sys.argv[0])
+if NAME not in SERVICES:
+    sys.exit(f"Run this as one of: {', '.join(SERVICES)} (e.g. via a symlink)")
+SERVICE = SERVICES[NAME]
+ENV = NAME.upper().replace("-", "_")  # e.g. ATLASSIAN_MCP
+
+MCP_URL = os.environ.get(f"{ENV}_URL") or SERVICE["url"]
+HOME = os.environ.get(f"{ENV}_HOME") or os.path.join(
+    os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), NAME)
+CALLBACK_PORT = int(os.environ.get(f"{ENV}_CALLBACK_PORT") or SERVICE["port"])
 REDIRECT_URI = f"http://127.0.0.1:{CALLBACK_PORT}/callback"
 PROTOCOL_VERSION = "2025-06-18"
-DEFAULT_SCOPES = (
-    "offline_access read:me read:account email "
-    "read:jira:agent-interface write:jira:agent-interface search:jira:agent-interface "
-    "read:confluence:agent-interface write:confluence:agent-interface "
-    "search:confluence:agent-interface")
+DEFAULT_SCOPES = SERVICE["scopes"]
 
 
 def request(method, url, data=None, headers=None, form=False):
@@ -54,11 +73,22 @@ def request(method, url, data=None, headers=None, form=False):
         return e.code, e.headers, e.read()
 
 
-def get_json(url):
+def get_json(url, required=True):
     st, _, body = request("GET", url)
     if st != 200:
+        if not required:
+            return None
         sys.exit(f"GET {url} failed: HTTP {st}")
     return json.loads(body)
+
+
+def auth_server_metadata(issuer):
+    """RFC 8414: /.well-known/... inserted before the issuer's path, else appended to it."""
+    u = urllib.parse.urlsplit(issuer.rstrip("/"))
+    inserted = f"{u.scheme}://{u.netloc}/.well-known/oauth-authorization-server{u.path}"
+    appended = f"{issuer.rstrip('/')}/.well-known/oauth-authorization-server"
+    return (get_json(inserted, required=inserted == appended)
+            or get_json(appended))
 
 
 def load(name):
@@ -87,10 +117,9 @@ def client():
         return c
     u = urllib.parse.urlsplit(MCP_URL)
     prm = get_json(f"{u.scheme}://{u.netloc}/.well-known/oauth-protected-resource{u.path}")
-    meta = get_json(prm["authorization_servers"][0].rstrip("/")
-                    + "/.well-known/oauth-authorization-server")
+    meta = auth_server_metadata(prm["authorization_servers"][0])
     st, _, body = request("POST", meta["registration_endpoint"], {
-        "client_name": "atlassian-mcp CLI",
+        "client_name": f"{NAME} CLI",
         "redirect_uris": [REDIRECT_URI],
         "grant_types": ["authorization_code", "refresh_token"],
         "response_types": ["code"],
@@ -126,12 +155,15 @@ def login(scopes):
     challenge = base64.urlsafe_b64encode(
         hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
     state = secrets.token_urlsafe(16)
-    url = c["metadata"]["authorization_endpoint"] + "?" + urllib.parse.urlencode({
+    params = {
         "response_type": "code", "client_id": c["client_id"],
-        "redirect_uri": REDIRECT_URI, "scope": scopes, "state": state,
+        "redirect_uri": REDIRECT_URI, "state": state,
         "code_challenge": challenge, "code_challenge_method": "S256",
         "resource": MCP_URL, "prompt": "consent",
-    })
+    }
+    if scopes:
+        params["scope"] = scopes
+    url = c["metadata"]["authorization_endpoint"] + "?" + urllib.parse.urlencode(params)
     result = {}
 
     class Callback(http.server.BaseHTTPRequestHandler):
@@ -153,7 +185,7 @@ def login(scopes):
 
     server = http.server.HTTPServer(("127.0.0.1", CALLBACK_PORT), Callback)
     server.timeout = 1
-    print(f"Opening browser for Atlassian login. If it does not open, visit:\n{url}",
+    print(f"Opening browser for {SERVICE['label']} login. If it does not open, visit:\n{url}",
           file=sys.stderr)
     webbrowser.open(url)
     deadline = time.time() + 300
@@ -173,23 +205,23 @@ def login(scopes):
     if st != 200:
         sys.exit(f"Token exchange failed: HTTP {st}: {body.decode(errors='replace')}")
     tok = store_token(json.loads(body))
-    print(f"Logged in. Scopes: {tok.get('scope', scopes)}", file=sys.stderr)
+    print(f"Logged in. Scopes: {tok.get('scope', scopes or 'server default')}", file=sys.stderr)
 
 
 def access_token():
     tok = load("token.json")
     if not tok:
-        sys.exit("Not logged in. Run: atlassian-mcp login")
+        sys.exit(f"Not logged in. Run: {NAME} login")
     if tok["expires_at"] - 60 > time.time():
         return tok["access_token"]
     if not tok.get("refresh_token"):
-        sys.exit("Session expired. Run: atlassian-mcp login")
+        sys.exit(f"Session expired. Run: {NAME} login")
     c = client()
     st, _, body = request("POST", c["metadata"]["token_endpoint"], {
         "grant_type": "refresh_token", "refresh_token": tok["refresh_token"],
         "resource": MCP_URL, **client_auth(c)}, form=True)
     if st != 200:
-        sys.exit(f"Token refresh failed (HTTP {st}). Run: atlassian-mcp login")
+        sys.exit(f"Token refresh failed (HTTP {st}). Run: {NAME} login")
     return store_token(json.loads(body), tok)["access_token"]
 
 
@@ -213,7 +245,7 @@ class Session:
     def __init__(self):
         self.token, self.sid, self.version, self.n = access_token(), None, None, 0
         init = self.rpc("initialize", {"protocolVersion": PROTOCOL_VERSION, "capabilities": {},
-                                       "clientInfo": {"name": "atlassian-mcp-cli", "version": "1"}})
+                                       "clientInfo": {"name": f"{NAME}-cli", "version": "1"}})
         self.version = init.get("protocolVersion", PROTOCOL_VERSION)
         self.post({"jsonrpc": "2.0", "method": "notifications/initialized"})
 
@@ -227,7 +259,7 @@ class Session:
         st, headers, body = request("POST", MCP_URL, msg, h)
         self.sid = headers.get("Mcp-Session-Id") or self.sid
         if st == 401:
-            sys.exit("Unauthorized. Run: atlassian-mcp login")
+            sys.exit(f"Unauthorized. Run: {NAME} login")
         if st >= 400:
             sys.exit(f"MCP HTTP {st}: {body.decode(errors='replace')[:1000]}")
         return messages(headers, body)
@@ -310,7 +342,7 @@ def cmd_tools(a):
 
 def cmd_call(a):
     s, args = Session(), parse_args(a.args, a.json)
-    if "cloudId" not in args:
+    if SERVICE.get("cloud_id") and "cloudId" not in args:
         tool = next((t for t in s.tools(max_age=86400) if t["name"] == a.tool), None)
         if tool and "cloudId" in tool.get("inputSchema", {}).get("properties", {}):
             cloud_id = s.cloud_id()
@@ -353,7 +385,9 @@ def cmd_logout(a):
 
 def main():
     signal.signal(signal.SIGPIPE, signal.SIG_DFL)  # quiet exit when piped into head
-    p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
+    if not MCP_URL:
+        sys.exit(f"No MCP server configured: set ${ENV}_URL")
+    p = argparse.ArgumentParser(prog=NAME, description=__doc__.split("\n\n")[0],
                                 formatter_class=argparse.RawDescriptionHelpFormatter,
                                 epilog=__doc__.split("\n\n", 2)[2])
     sub = p.add_subparsers(dest="cmd", required=True)
