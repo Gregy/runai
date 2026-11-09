@@ -14,4 +14,14 @@
 - To log in to GitHub, run `gh-login`. It wraps `gh auth login --web --clipboard --git-protocol https`, opens the device page in the operator's browser through the host bridge, and leaves the one-time code in the operator's clipboard to paste.
 - Fact: Jira and Confluence are accessed with the `atlassian-mcp` CLI (official Atlassian MCP server, browser OAuth login); load the `atlassian-mcp` skill before using it.
 - Do not use externally stored html reports (artifact-design skill) unless explicitly asked for by operator
+- Rule: PR/MR descriptions ("details-summary" pattern). Each time you write a MR/PR description start with a short opener: 1-3 plain sentences on what the change does and why a reader should care. A screenshot or a few lines of command output can go here too if needed. Put the full agent-written text (problem, design, decisions, verification) after it in a collapsed block whose summary is your model name and effort level, e.g. `Claude Opus 5.5 Medium` (just the model name if you don't know the effort):
+  ```
+  <details>
+  <summary>Claude Opus 5.5 Medium</summary>
+
+  ...full Markdown description...
+
+  </details>
+  ```
+  The opener stands for the operator's own judgement, so show it to the operator to approve or rewrite before you create or update the PR/MR. When editing an existing description, fetch it first and keep the operator's opener as it is.
 - When running commands always use reasonable timeouts. Do not wait for 10 minutes for a script that is supposed to finish in 3 seconds!
