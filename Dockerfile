@@ -85,6 +85,15 @@ RUN curl -fsSL "https://gitlab.com/gitlab-org/cli/-/releases/v${GLAB_VERSION}/do
     && rm -f /tmp/glab.deb \
     && rm -rf /var/lib/apt/lists/*
 
+# Install rclone — official .deb from GitHub releases (Debian's package lags far behind)
+# https://github.com/rclone/rclone/releases
+ARG RCLONE_VERSION=1.75.2
+RUN curl -fsSL "https://github.com/rclone/rclone/releases/download/v${RCLONE_VERSION}/rclone-v${RCLONE_VERSION}-linux-amd64.deb" \
+        -o /tmp/rclone.deb \
+    && apt-get update && apt-get install -y /tmp/rclone.deb \
+    && rm -f /tmp/rclone.deb \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install Grafana Cloud CLI (gcx) — official upstream install script
 # https://github.com/grafana/gcx/blob/main/docs/installation.md
 ARG GCX_VERSION=0.2.11
