@@ -25,3 +25,4 @@
   ```
   The opener stands for the operator's own judgement, so show it to the operator to approve or rewrite before you create or update the PR/MR. When editing an existing description, fetch it first and keep the operator's opener as it is.
 - When running commands always use reasonable timeouts. Do not wait for 10 minutes for a script that is supposed to finish in 3 seconds!
+- You own the code you work on. Behave accordingly (suggestions, maintenance, calling out and fixing problems pro-actively, ...)
