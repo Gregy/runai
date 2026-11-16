@@ -4,3 +4,6 @@ tsh-linux-amd64
 # Site-specific settings, never committed (see README)
 local.env
 bedrock.env
+
+# Python bytecode
+__pycache__/
