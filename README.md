@@ -27,6 +27,14 @@ flag.
 `/model` and press `Ctrl+S` to make it the default. Credentials, extensions
 and settings all live in `~/.pi-docker`, so they persist across runs.
 
+The repo's `CLAUDE.md`, copied to `/home/coder/CLAUDE.md` in the image, is the
+main instruction file for both agents. Claude Code picks it up through an
+`@~/CLAUDE.md` line in `~/.claude-code-docker/CLAUDE.md`. pi has no imports and
+only looks above the working directory and in its agent dir, so `run.sh`
+passes it with `--append-system-prompt /home/coder/CLAUDE.md`. Inside this
+checkout pi sees it twice (also as the project's `CLAUDE.md`), as Claude Code
+does.
+
 - **AWS Bedrock** needs `--aws` to forward the host's AWS credentials.
 - **Cursor subscription**: install the community
   [pi-cursor-sdk](https://github.com/fitchmultz/pi-cursor-sdk) extension once

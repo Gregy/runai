@@ -331,8 +331,11 @@ if [ "$PI_MODE" = true ]; then
     if [ "$FORWARD_AWS" != true ]; then
         echo "   Bedrock models need --aws; Cursor models need a Cursor API key via /login once."
     fi
-    # Skills shipped with the image are read in place (see Dockerfile)
-    AGENT_CMD=(pi --skill /opt/runai/skills)
+    # Skills shipped with the image are read in place (see Dockerfile).
+    # pi only finds CLAUDE.md files above the working directory and in its agent
+    # dir, and the workspace is not under /home/coder, so the image's CLAUDE.md
+    # (Claude Code gets it via the @~/CLAUDE.md import) is passed explicitly.
+    AGENT_CMD=(pi --skill /opt/runai/skills --append-system-prompt /home/coder/CLAUDE.md)
 else
     echo "🚀 Starting Claude Code..."
     # --plugin-dir: the skills shipped with the image, read in place (see Dockerfile)
