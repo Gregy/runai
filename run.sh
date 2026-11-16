@@ -84,8 +84,9 @@ if [ ! -f "$SCRIPT_DIR/tsh-linux-amd64" ]; then
 fi
 
 # Site-specific settings live in the untracked local.env next to this script;
-# see README. GLAB_* are build settings; GEMINI_ENTERPRISE_* are passed to the
-# container at runtime (for the gemini-enterprise CLI).
+# see README. GLAB_* are build settings; GEMINI_ENTERPRISE_* (for the
+# gemini-enterprise CLI) and PI_CURSOR_* (overriding the image's pi-cursor-sdk
+# defaults) are passed to the container at runtime.
 GLAB_HOST=""
 GLAB_CLIENT_ID=""
 if [ -f "$SCRIPT_DIR/local.env" ]; then
@@ -93,7 +94,7 @@ if [ -f "$SCRIPT_DIR/local.env" ]; then
     . "$SCRIPT_DIR/local.env"
 fi
 SITE_DOCKER_ARGS=()
-for var in $(compgen -v GEMINI_ENTERPRISE_); do
+for var in $(compgen -v GEMINI_ENTERPRISE_) $(compgen -v PI_CURSOR_); do
     SITE_DOCKER_ARGS+=(-e "$var=${!var}")
 done
 
@@ -328,7 +329,7 @@ if [ "$PI_MODE" = true ]; then
     # Ctrl+S in the /model picker saves (Cursor, Bedrock, ...).
     echo "🥧 Starting pi (default model from ${PI_CONFIG_DIR}/agent/settings.json)..."
     if [ "$FORWARD_AWS" != true ]; then
-        echo "   Bedrock models need --aws; Cursor models need /login cursor once."
+        echo "   Bedrock models need --aws; Cursor models need a Cursor API key via /login once."
     fi
     # Skills shipped with the image are read in place (see Dockerfile)
     AGENT_CMD=(pi --skill /opt/runai/skills)

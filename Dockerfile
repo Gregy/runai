@@ -1,6 +1,6 @@
 # Dockerfile for Claude Code (OAuth / Subscription login)
-# Node 22+ required by pi 0.75+.
-FROM node:22-trixie
+# Node 24+ required by pi-cursor-sdk (pi itself accepts >=22.19).
+FROM node:24-trixie
 
 # Install useful dev tools and dependencies.
 # The python3-{requests,cryptography,pypdf} packages are for the expense
@@ -26,7 +26,7 @@ RUN apt-get update && apt-get install -y \
     python3-cryptography \
     python3-pypdf \
     && rm -rf /var/lib/apt/lists/* \
-    && pip3 install --break-system-packages pre-commit \
+    && pip3 install --break-system-packages --ignore-installed pre-commit \
     && git lfs install --system --skip-repo
 
 # Install AWS CLI v2
@@ -175,6 +175,16 @@ RUN chmod +x /entrypoint.sh \
 # same for clipboard writes, so e.g. `gh auth login --web --clipboard` puts the
 # one-time code straight into the host clipboard, ready to paste.
 ENV BROWSER=/usr/local/bin/host-browser
+# pi-cursor-sdk: run Cursor models on pi's tools instead of Cursor's native ones,
+# so file/shell work goes through pi's tool_call hooks and shows as pi tool calls.
+# NATIVE_TOOLS=0 leaves Cursor only its MCP surface (the pi__* bridge), which
+# hides pi's read/bash/edit/... unless EXPOSE_BUILTIN_TOOLS=1. SETTING_SOURCES=none
+# stops Cursor loading its own MCP servers, rules and skills; pi supplies those.
+# AskQuestion is routed through pi's UI instead of the IDE-only widget.
+ENV PI_CURSOR_NATIVE_TOOLS=0 \
+    PI_CURSOR_EXPOSE_BUILTIN_TOOLS=1 \
+    PI_CURSOR_SETTING_SOURCES=none \
+    PI_CURSOR_ASK_QUESTION=1
 
 # Fallback working directory only: run.sh overrides it with -w so the workspace
 # is mounted at the same absolute path inside the container as on the host.

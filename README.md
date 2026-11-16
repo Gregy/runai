@@ -29,10 +29,22 @@ and settings all live in `~/.pi-docker`, so they persist across runs.
 
 - **AWS Bedrock** needs `--aws` to forward the host's AWS credentials.
 - **Cursor subscription**: install the community
-  [pi-cursor](https://github.com/Rahularya01/pi-cursor) extension once with
-  `pi install npm:@rahularya01/pi-cursor@<version>` (review the release
-  first; it uses Cursor's unofficial protocol), then `/login cursor` inside
-  pi. No `--aws` needed.
+  [pi-cursor-sdk](https://github.com/fitchmultz/pi-cursor-sdk) extension once
+  with `pi install npm:pi-cursor-sdk` (review the release first). It talks to
+  Cursor through the official TypeScript SDK and needs a **Cursor user API
+  key** from [Dashboard → API Keys](https://cursor.com/dashboard/api) —
+  Desktop/CLI OAuth login is not enough. Inside pi run `/login`, choose
+  Cursor, paste the key, then `/cursor-refresh-models`. No `--aws` needed.
+  The image makes Cursor models use pi's tools rather than Cursor's own:
+  `PI_CURSOR_NATIVE_TOOLS=0` drops Cursor's native tools (shell, file edits,
+  web search, subagents, ...), `PI_CURSOR_EXPOSE_BUILTIN_TOOLS=1` gives it
+  pi's `read`/`bash`/`edit`/... instead, and `PI_CURSOR_SETTING_SOURCES=none`
+  stops Cursor loading its own MCP servers, rules and skills.
+  `PI_CURSOR_ASK_QUESTION=1` makes AskQuestion work in the terminal. Needs
+  pi-cursor-sdk 0.5.4 or later; older releases ignore `PI_CURSOR_NATIVE_TOOLS`.
+  `run.sh` passes any `PI_CURSOR_*` set in the host shell or `local.env` to
+  the container, so e.g. `PI_CURSOR_NATIVE_TOOLS=1 ./run.sh --pi` brings
+  Cursor's own tools back for one run.
 
 ## Skills
 
